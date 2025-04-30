@@ -9,9 +9,19 @@ import 'audio_visualizer_native.dart'
 class AudioVisualizerOptions {
   final bool centeredBands;
   final int barCount;
+
+  /// Update interval in milliseconds (default: 50ms).
+  final int updateInterval;
+
+  /// Analyser smoothingTimeConstant (0.0 to 1.0, default: 0.8).
+  /// Lower values are more responsive.
+  final double smoothingTimeConstant;
+
   const AudioVisualizerOptions({
     this.centeredBands = true,
     this.barCount = 7,
+    this.updateInterval = 50, // Default to 50ms
+    this.smoothingTimeConstant = 0.8, // Default to 0.8
   });
 }
 

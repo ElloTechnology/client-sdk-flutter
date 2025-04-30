@@ -13,7 +13,6 @@ import 'web/_audio_analyser.dart';
 
 class AudioVisualizerWeb extends AudioVisualizer {
   AudioAnalyser? _audioAnalyser;
-  MultiBandTrackVolumeOptions options = MultiBandTrackVolumeOptions();
   Timer? _timer;
   final AudioTrack? _audioTrack;
   MediaStreamTrack get mediaStreamTrack => _audioTrack!.mediaStreamTrack;
@@ -34,12 +33,16 @@ class AudioVisualizerWeb extends AudioVisualizer {
 
     final bands = visualizerOptions.barCount;
 
-    _audioAnalyser = createAudioAnalyser(_audioTrack!, options.analyserOptions);
+    _audioAnalyser = createAudioAnalyser(
+        _audioTrack!,
+        AudioAnalyserOptions(
+          smoothingTimeConstant: visualizerOptions.smoothingTimeConstant,
+        ));
 
     final bufferLength = _audioAnalyser?.analyser.frequencyBinCount;
 
     _timer = Timer.periodic(
-      Duration(milliseconds: options.updateInterval!.toInt()),
+      Duration(milliseconds: visualizerOptions.updateInterval),
       (timer) {
         try {
           var tmp = JSFloat32Array.withLength(bufferLength ?? 0);
@@ -49,8 +52,6 @@ class AudioVisualizerWeb extends AudioVisualizer {
             var element = tmp.toDart[i];
             frequencies[i] = element;
           }
-          frequencies = frequencies.sublist(
-              options.loPass!.toInt(), options.hiPass!.toInt());
 
           final normalizedFrequencies = normalizeFrequencies(frequencies);
           final chunkSize = (normalizedFrequencies.length / (bands + 1)).ceil();
@@ -116,28 +117,6 @@ class AudioVisualizerWeb extends AudioVisualizer {
     await _audioAnalyser?.cleanup();
     _audioAnalyser = null;
   }
-}
-
-class MultiBandTrackVolumeOptions {
-  /// cut off of frequency bins on the lower end
-  /// Note: this is not a frequency measure, but in relation to analyserOptions.fftSize,
-  final num? loPass;
-
-  /// cut off of frequency bins on the higher end
-  /// Note: this is not a frequency measure, but in relation to analyserOptions.fftSize,
-  final num? hiPass;
-
-  /// update should run every x ms
-  final num? updateInterval;
-
-  final AudioAnalyserOptions? analyserOptions;
-
-  const MultiBandTrackVolumeOptions({
-    this.loPass = 0,
-    this.hiPass = 170,
-    this.updateInterval = 32,
-    this.analyserOptions = const AudioAnalyserOptions(),
-  });
 }
 
 double normalizeDb(num value) {
