@@ -41,6 +41,8 @@
 package io.livekit.plugin
 
 import android.media.AudioTrack
+import android.os.Trace
+import android.util.Log
 import com.paramsen.noise.Noise
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -88,18 +90,29 @@ class FFTAudioAnalyzer {
         private set
 
     fun configure(inputAudioFormat: AudioFormat) {
-        this.inputAudioFormat = inputAudioFormat
+        Trace.beginSection("LK::FFTAudioAnalyzer::configure")
+        try {
+            Log.d("LK-Profile", "FFTAudioAnalyzer::configure thread=${Thread.currentThread().name} sampleRate=${inputAudioFormat.sampleRate} channels=${inputAudioFormat.numberOfChannels}")
+            this.inputAudioFormat = inputAudioFormat
 
-        noise = Noise.real(SAMPLE_SIZE)
+            noise = Noise.real(SAMPLE_SIZE)
 
-        audioTrackBufferSize = getDefaultBufferSizeInBytes(inputAudioFormat)
+            audioTrackBufferSize = getDefaultBufferSizeInBytes(inputAudioFormat)
 
-        srcBuffer = ByteBuffer.allocate(audioTrackBufferSize + BUFFER_EXTRA_SIZE)
+            srcBuffer = ByteBuffer.allocate(audioTrackBufferSize + BUFFER_EXTRA_SIZE)
+        } finally {
+            Trace.endSection()
+        }
     }
 
     fun release() {
-        noise?.close()
-        noise = null
+        Trace.beginSection("LK::FFTAudioAnalyzer::release")
+        try {
+            noise?.close()
+            noise = null
+        } finally {
+            Trace.endSection()
+        }
     }
 
     /**
@@ -142,6 +155,8 @@ class FFTAudioAnalyzer {
     }
 
     private fun processFFT(buffer: ByteBuffer) {
+        Trace.beginSection("LK::FFTAudioAnalyzer::processFFT")
+        try {
         if (noise == null) {
             return
         }
@@ -168,6 +183,9 @@ class FFTAudioAnalyzer {
             val fft = noise?.fft(src, dst)!!
 
             this.fft = fft
+        }
+        } finally {
+            Trace.endSection()
         }
     }
 

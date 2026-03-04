@@ -18,35 +18,67 @@ package io.livekit.plugin
 
 import android.os.Handler
 import android.os.Looper
+import android.os.Trace
+import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import org.webrtc.AudioTrack
 import org.webrtc.AudioTrackSink
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.*
 
 class Visualizer(
     private var barCount: Int,
     private var isCentered: Boolean,
+    private var smoothTransition: Boolean,
     audioTrack: LKAudioTrack,
     binaryMessenger: BinaryMessenger,
     visualizerId: String
 ) : EventChannel.StreamHandler, AudioTrackSink {
+    companion object {
+        // Per-category queue instrumentation counters
+        @JvmStatic val pendingCount = AtomicInteger(0)
+        @JvmStatic val dispatchedCount = AtomicLong(0)
+        @JvmStatic val totalDispatchNanos = AtomicLong(0)
+
+        /** Returns a snapshot of [pending, dispatched, totalDispatchNanos]. */
+        @JvmStatic fun snapshot(): LongArray = longArrayOf(
+            pendingCount.get().toLong(),
+            dispatchedCount.get(),
+            totalDispatchNanos.get()
+        )
+    }
+
     private var eventChannel: EventChannel? = null
     private var eventSink: EventChannel.EventSink? = null
     private var ffiAudioAnalyzer = FFTAudioAnalyzer()
     private var audioTrack: LKAudioTrack? = audioTrack
     private var amplitudes: FloatArray = FloatArray(0)
     private var bands: FloatArray
+    // Latest-value coalescing: onData fires ~50x/sec per track on the audio thread.
+    // Instead of posting one handler message per call, we store the latest bands atomically
+    // and schedule at most one drain per Looper cycle. ~50 calls → 1 main-thread message.
+    private val latestBands = AtomicReference<FloatArray?>(null)
+    private val postScheduled = AtomicBoolean(false)
     private var loPass: Int = 0
     private var hiPass: Int = 80
 
     private var audioFormat = AudioFormat(16, 48000, 1)
 
     fun stop() {
-        audioTrack?.removeSink(this)
-        eventChannel?.setStreamHandler(null)
-        ffiAudioAnalyzer.release()
+        Trace.beginSection("LK::Visualizer::stop")
+        try {
+            Log.d("LK-Profile", "Visualizer::stop thread=${Thread.currentThread().name}")
+            audioTrack?.removeSink(this)
+            eventChannel?.setStreamHandler(null)
+            ffiAudioAnalyzer.release()
+        } finally {
+            Trace.endSection()
+        }
     }
 
     override fun onData(
@@ -57,34 +89,65 @@ class Visualizer(
         numberOfFrames: Int,
         absoluteCaptureTimestampMs: Long
     ) {
+        Trace.beginSection("LK::Visualizer::onData")
+        try {
+            if (audioFormat.sampleRate != sampleRate || audioFormat.bitsPerSample != bitsPerSample || audioFormat.numberOfChannels != numberOfChannels) {
+                audioFormat = AudioFormat(bitsPerSample, sampleRate, numberOfChannels)
+                ffiAudioAnalyzer.configure(audioFormat)
+            }
 
-        if (audioFormat.sampleRate != sampleRate || audioFormat.bitsPerSample != bitsPerSample || audioFormat.numberOfChannels != numberOfChannels) {
-            audioFormat = AudioFormat(bitsPerSample, sampleRate, numberOfChannels)
-            ffiAudioAnalyzer.configure(audioFormat)
-        }
+            ffiAudioAnalyzer.queueInput(audioData)
+            val fft: FloatArray = ffiAudioAnalyzer.fft ?: return
 
-        ffiAudioAnalyzer.queueInput(audioData)
-        val fft: FloatArray = ffiAudioAnalyzer.fft ?: return
+            val averages = FloatArray(barCount)
 
-        val averages = FloatArray(barCount)
+            val sliced = fft.slice(loPass until hiPass)
+            amplitudes = calculateAmplitudeBarsFromFFT(sliced, averages, barCount)
 
-        val sliced = fft.slice(loPass until hiPass)
-        amplitudes = calculateAmplitudeBarsFromFFT(sliced, averages, barCount)
+            if(bands.size != amplitudes.size) {
+                bands = amplitudes;
+            }
 
-        if(bands.size != amplitudes.size) {
-            bands = amplitudes;
-        }
+            if(this.isCentered) {
+                amplitudes = centerBands(amplitudes)
+            }
 
-        if(this.isCentered) {
-            amplitudes = centerBands(amplitudes)
-        }
+            if(this.smoothTransition) {
+                bands = bands.mapIndexed { index, value ->
+                    smoothTransition(value, amplitudes[index], 0.3f)
+                }.toFloatArray()
+            } else {
+                bands = amplitudes
+            }
 
-        bands = bands.mapIndexed { index, value ->
-          smoothTransition(value, amplitudes[index], 0.3f)
-        }.toFloatArray()
-
-        handler.post {
-            eventSink?.success(bands)
+            // Store latest bands; only the first call after a drain posts to the main thread.
+            // set() is atomic — overwrites any previous value so only the newest frame survives.
+            latestBands.set(bands)
+            // compareAndSet(false, true): atomically checks if postScheduled is false (no pending
+            // handler message) and flips it to true. Returns true only for the first caller,
+            // so exactly one handler.post is scheduled per Looper cycle.
+            if (postScheduled.compareAndSet(false, true)) {
+                pendingCount.incrementAndGet()
+                handler.post {
+                    pendingCount.decrementAndGet()
+                    val t0 = System.nanoTime()
+                    Trace.beginSection("LK::Visualizer::onData::mainThread")
+                    try {
+                        // Reset the flag so the next onData call after this drain can schedule again.
+                        postScheduled.set(false)
+                        // getAndSet(null): atomically grabs the most recent value and clears it,
+                        // so we send only the latest frame to Dart; intermediate frames are skipped.
+                        latestBands.getAndSet(null)?.let { eventSink?.success(it) }
+                    } finally {
+                        Trace.endSection()
+                        val elapsed = System.nanoTime() - t0
+                        dispatchedCount.incrementAndGet()
+                        totalDispatchNanos.addAndGet(elapsed)
+                    }
+                }
+            }
+        } finally {
+            Trace.endSection()
         }
     }
 
@@ -101,11 +164,17 @@ class Visualizer(
     }
 
     init {
-        eventChannel = EventChannel(binaryMessenger, "io.livekit.audio.visualizer/eventChannel-" + audioTrack.id() + "-" + visualizerId)
-        eventChannel?.setStreamHandler(this)
-        bands = FloatArray(barCount)
-        ffiAudioAnalyzer.configure(audioFormat)
-        audioTrack.addSink(this)
+        Trace.beginSection("LK::Visualizer::init")
+        try {
+            Log.d("LK-Profile", "Visualizer::init thread=${Thread.currentThread().name} trackId=${audioTrack.id()} visualizerId=$visualizerId barCount=$barCount")
+            eventChannel = EventChannel(binaryMessenger, "io.livekit.audio.visualizer/eventChannel-" + audioTrack.id() + "-" + visualizerId)
+            eventChannel?.setStreamHandler(this)
+            bands = FloatArray(barCount)
+            ffiAudioAnalyzer.configure(audioFormat)
+            audioTrack.addSink(this)
+        } finally {
+            Trace.endSection()
+        }
     }
 }
 

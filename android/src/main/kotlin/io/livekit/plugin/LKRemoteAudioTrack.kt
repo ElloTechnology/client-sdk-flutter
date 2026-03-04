@@ -16,18 +16,36 @@
 
 package io.livekit.plugin
 
+import android.os.Trace
+import android.util.Log
 import org.webrtc.AudioTrack
 import org.webrtc.AudioTrackSink
 
 class LKRemoteAudioTrack(audioTrack: AudioTrack) : LKAudioTrack {
+    companion object {
+        private const val TAG = "LK-Profile"
+    }
+
     private var audioTrack: AudioTrack? = audioTrack
 
     override fun addSink(sink: AudioTrackSink?) {
-        audioTrack?.addSink(sink)
+        Trace.beginSection("LK::LKRemoteAudioTrack::addSink")
+        try {
+            Log.d(TAG, "LKRemoteAudioTrack::addSink thread=${Thread.currentThread().name} trackId=${id()}")
+            audioTrack?.addSink(sink)
+        } finally {
+            Trace.endSection()
+        }
     }
 
     override fun removeSink(sink: AudioTrackSink) {
-        audioTrack?.removeSink(sink)
+        Trace.beginSection("LK::LKRemoteAudioTrack::removeSink")
+        try {
+            Log.d(TAG, "LKRemoteAudioTrack::removeSink thread=${Thread.currentThread().name} trackId=${id()}")
+            audioTrack?.removeSink(sink)
+        } finally {
+            Trace.endSection()
+        }
     }
 
     override fun id(): String {

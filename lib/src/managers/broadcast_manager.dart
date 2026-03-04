@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' hide internal;
 
 import 'package:meta/meta.dart';
 
@@ -47,8 +47,8 @@ class BroadcastManager extends ChangeNotifier {
   ///
   /// - Note: This is merely a request and does not guarantee the user will choose to start the broadcast.
   ///
-  void requestActivation() {
-    Native.broadcastRequestActivation();
+  Future<void> requestActivation() async {
+    await Native.broadcastRequestActivation();
   }
 
   /// Requests to stop the broadcast.
@@ -56,7 +56,7 @@ class BroadcastManager extends ChangeNotifier {
   /// If a screen share track is published, it will also be unpublished once the broadcast ends.
   /// This method has no effect if no broadcast is currently in progress.
   ///
-  void requestStop() {
-    Native.broadcastRequestStop();
+  Future<void> requestStop() async {
+    await Native.broadcastRequestStop();
   }
 }

@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
-import 'package:livekit_client/src/events.dart' show AudioVisualizerEvent;
+import '../events.dart' show AudioVisualizerEvent;
 import '../logger.dart' show logger;
 import 'audio_visualizer.dart';
 import 'local/local.dart' show AudioTrack;
@@ -34,7 +34,18 @@ class AudioVisualizerWeb extends AudioVisualizer {
 
     final bands = visualizerOptions.barCount;
 
-    _audioAnalyser = createAudioAnalyser(_audioTrack!, options.analyserOptions);
+    // Override smoothingTimeConstant to a very low valiue if smoothTransition is false
+    var currentAnalyserOptions = options.analyserOptions ?? const AudioAnalyserOptions();
+    if (!visualizerOptions.smoothTransition) {
+      currentAnalyserOptions = AudioAnalyserOptions(
+        fftSize: currentAnalyserOptions.fftSize,
+        maxDecibels: currentAnalyserOptions.maxDecibels,
+        minDecibels: currentAnalyserOptions.minDecibels,
+        smoothingTimeConstant: 0.02,
+      );
+    }
+
+    _audioAnalyser = createAudioAnalyser(_audioTrack!, currentAnalyserOptions);
 
     final bufferLength = _audioAnalyser?.analyser.frequencyBinCount;
 
@@ -42,24 +53,22 @@ class AudioVisualizerWeb extends AudioVisualizer {
       Duration(milliseconds: options.updateInterval!.toInt()),
       (timer) {
         try {
-          var tmp = JSFloat32Array.withLength(bufferLength ?? 0);
+          final tmp = JSFloat32Array.withLength(bufferLength ?? 0);
           _audioAnalyser?.analyser.getFloatFrequencyData(tmp);
           Float32List frequencies = Float32List(tmp.toDart.length);
           for (var i = 0; i < tmp.toDart.length; i++) {
-            var element = tmp.toDart[i];
+            final element = tmp.toDart[i];
             frequencies[i] = element;
           }
-          frequencies = frequencies.sublist(
-              options.loPass!.toInt(), options.hiPass!.toInt());
+          frequencies = frequencies.sublist(options.loPass!.toInt(), options.hiPass!.toInt());
 
           final normalizedFrequencies = normalizeFrequencies(frequencies);
           final chunkSize = (normalizedFrequencies.length / (bands + 1)).ceil();
           Float32List chunks = Float32List(visualizerOptions.barCount);
 
           for (var i = 0; i < bands; i++) {
-            final summedVolumes = normalizedFrequencies
-                .sublist(i * chunkSize, (i + 1) * chunkSize)
-                .reduce((acc, val) => (acc += val));
+            final summedVolumes =
+                normalizedFrequencies.sublist(i * chunkSize, (i + 1) * chunkSize).reduce((acc, val) => (acc += val));
             chunks[i] = (summedVolumes / chunkSize);
           }
 
@@ -144,8 +153,7 @@ double normalizeDb(num value) {
   const minDb = -100.0;
   const maxDb = -10.0;
 
-  var db =
-      1.0 - (math.max(minDb, math.min(maxDb, value)) * -1.0).toDouble() / 100.0;
+  var db = 1.0 - (math.max(minDb, math.min(maxDb, value)) * -1.0).toDouble() / 100.0;
   db = math.sqrt(db);
 
   return db;
@@ -161,7 +169,5 @@ List<num> normalizeFrequencies(List<double> frequencies) {
   }).toList();
 }
 
-AudioVisualizer createVisualizerImpl(AudioTrack track,
-        {AudioVisualizerOptions? options}) =>
-    AudioVisualizerWeb(track,
-        visualizerOptions: options ?? AudioVisualizerOptions());
+AudioVisualizer createVisualizerImpl(AudioTrack track, {AudioVisualizerOptions? options}) =>
+    AudioVisualizerWeb(track, visualizerOptions: options ?? AudioVisualizerOptions());

@@ -1,5 +1,116 @@
 # CHANGELOG
 
+## 2.6.2
+
+* Added: Bitrate priority control APIs
+* Fixed: Windows: stop camera after unpublishing video track
+* Fixed: Keep mute state in sync with server
+* Fixed: Fix example prejoin device dropdown handling
+* Chore: Mark LocalVideoTrack constructor as internal for consistency with LocalAudioTrack
+* Chore: Update protobuf dependency to v6.0.0
+* Chore: Skip iOS platform download in CI
+
+## 2.6.1
+
+* Fixed: Enable E2EE for VP9 codec
+* Fixed: Correct spelling in E2EE log and error messages
+* Fixed: Ensure all dispose functions are executed even if one throws
+* Fixed: Fix microphone label typo in example app prejoin audio settings
+* Docs: Fix typos and inconsistencies in README and CHANGELOG
+
+## 2.6.0
+
+* Session API
+* Allow customizing screen share dialog labels for localization
+
+## 2.5.4
+
+* Added pre-connect audio buffering
+* Added token source API with caching and endpoint helpers
+* Enabled software AEC/NS/AGC for Linux
+* Added event logging with public/internal tagging
+* Migrated manual JSON serialization to json_serializable code generation
+* Re-enabled Flutter lint warnings and fixed existing issues
+* Improved reliable data channel buffering, sequencing, and added integration tests
+* Fixed race condition with pending tracks
+
+## 2.5.3
+
+* Feat: Data Packet Cryptor (#873)
+* Feat: Add E2EE support for H265 (#864)
+* Fix: fix async call for update participant info (#897)
+* Move the accessToken to header (#891)
+* Bumpup and clamp connection timeout, fix the comment (#893)
+* Fix events emit order (#902)
+
+## 2.5.2
+
+* Fix missing properties for TextStreamInfo (#881)
+* Enum for TextStreamOperationType (#882)
+* Fix stream progress (#884)
+
+## 2.5.1
+
+* Fix Publication's track property initialization (#867)
+* Fix Missing attributes in data stream (#865)
+* Fix Internal WebRTC pod version conflict (#876)
+
+## 2.5.0+hotfix.3
+
+* fix: Fix @internal conflicting imports from package meta or flutter/foundation.
+
+## 2.5.0+hotfix.2
+
+* hotfix: bump libwebrtc to m137.7151.03 to support H.265 (#837)
+* feat: Expose ParticipantState (#848)
+* chore: Update protobuf to v1.39.2 (#847)
+
+## 2.5.0+hotfix.1
+
+* fix: Switch to livekit fork of noise for 16KB page support (#839)
+* hotfix: bump libwebrtc to m137.7151.01 for android (#837)
+* fix: tighten VideoTrackRenderer Widget (#695)
+
+## 2.5.0
+
+* Bump flutter-webrtc to 1.0.0.
+* Upgrade libwebrtc to m137.7151
+* fix: E2EE bug for Chrome. (#832)
+* fix(web, firefox): backup old values before overwriting them (#819)
+* fix: memory leak visualizer stop android (#831)
+* fix: ensure engine always has correct device id if switching camera fails (#820)
+* fix: Always emit RoomDisconnectedEvent when the reason is clientInitiated. (#821)
+* fix: sif frame enqueuing with e2ee (#822)
+* fix: update camera `deviceId` when track is null (#814)
+* feat: Audio Visualizer for Windows/Linux. (#739)
+
+## 2.4.9
+
+* Added: Attribute typings for agent and transcription (#811)
+* Changed: Enum for VideoView.fit (#806)
+* Chore: Update protobuf protocol to v1.39.2 (#812)
+
+## 2.4.8
+
+* fix: fix room.disconnect when pending reconnect. (#802)
+* fix: fix bitrate display for remote video track. (#801)
+* feat: add a flag to skip auto native audio config (#797)
+* fix: sif detection for e2ee (#788)
+* chore: Update protobuf dep (#790)
+
+## 2.4.7
+
+* fix: interop for encode and decode function in e2ee cryptor (#785)
+* chore: Unorder the lossy data channel (#783)
+* chore: bump flutter-webrtc to 0.14.1.
+* fix: mitigate reconnect loop (#780)
+
+## 2.4.6
+
+* feat: Add smoothTransition option for AudioVisualizer. (#773)
+* fix: Fix deadlock when creating a frame cryptor on iOS/macOS.
+* fix: add task runner for linux to fix crashes.
+
 ## 2.4.5
 
 * feat: noise filter for flutter web. (#762)

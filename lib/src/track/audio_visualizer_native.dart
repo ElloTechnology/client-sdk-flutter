@@ -4,18 +4,20 @@ import 'package:flutter/services.dart';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
-import 'package:livekit_client/src/events.dart' show AudioVisualizerEvent;
-import 'package:livekit_client/src/track/local/local.dart';
+import '../events.dart' show AudioVisualizerEvent;
 import '../support/native.dart' show Native;
+import '../track/local/local.dart';
 import 'audio_visualizer.dart';
 
 class AudioVisualizerNative extends AudioVisualizer {
-  final String visualizerId = '${DateTime.now().millisecondsSinceEpoch}';
   EventChannel? _eventChannel;
   StreamSubscription? _streamSubscription;
+
   final AudioTrack? _audioTrack;
-  MediaStreamTrack get mediaStreamTrack => _audioTrack!.mediaStreamTrack;
   final AudioVisualizerOptions visualizerOptions;
+
+  MediaStreamTrack get mediaStreamTrack => _audioTrack!.mediaStreamTrack;
+
   AudioVisualizerNative(this._audioTrack, {required this.visualizerOptions}) {
     onDispose(() async {
       await events.dispose();
@@ -33,12 +35,11 @@ class AudioVisualizerNative extends AudioVisualizer {
       isCentered: visualizerOptions.centeredBands,
       barCount: visualizerOptions.barCount,
       visualizerId: visualizerId,
+      smoothTransition: visualizerOptions.smoothTransition,
     );
 
-    _eventChannel = EventChannel(
-        'io.livekit.audio.visualizer/eventChannel-${mediaStreamTrack.id}-$visualizerId');
-    _streamSubscription =
-        _eventChannel?.receiveBroadcastStream().listen((event) {
+    _eventChannel = EventChannel('io.livekit.audio.visualizer/eventChannel-${mediaStreamTrack.id}-$visualizerId');
+    _streamSubscription = _eventChannel?.receiveBroadcastStream().listen((event) {
       events.emit(AudioVisualizerEvent(
         track: _audioTrack!,
         event: event,
@@ -52,13 +53,7 @@ class AudioVisualizerNative extends AudioVisualizer {
       return;
     }
 
-    await Native.stopVisualizer(mediaStreamTrack.id!,
-        visualizerId: visualizerId);
-
-    events.emit(AudioVisualizerEvent(
-      track: _audioTrack!,
-      event: [],
-    ));
+    await Native.stopVisualizer(mediaStreamTrack.id!, visualizerId: visualizerId);
 
     await _streamSubscription?.cancel();
     _streamSubscription = null;
@@ -66,7 +61,5 @@ class AudioVisualizerNative extends AudioVisualizer {
   }
 }
 
-AudioVisualizer createVisualizerImpl(AudioTrack track,
-        {AudioVisualizerOptions? options}) =>
-    AudioVisualizerNative(track,
-        visualizerOptions: options ?? AudioVisualizerOptions());
+AudioVisualizer createVisualizerImpl(AudioTrack track, {AudioVisualizerOptions? options}) =>
+    AudioVisualizerNative(track, visualizerOptions: options ?? AudioVisualizerOptions());

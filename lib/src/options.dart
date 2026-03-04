@@ -14,12 +14,10 @@
 
 import 'constants.dart';
 import 'e2ee/options.dart';
-import 'proto/livekit_models.pb.dart';
-import 'publication/remote.dart';
 import 'track/local/audio.dart';
 import 'track/local/video.dart';
 import 'track/options.dart';
-import 'track/track.dart';
+import 'types/audio_encoding.dart';
 import 'types/other.dart';
 import 'types/video_encoding.dart';
 import 'types/video_parameters.dart';
@@ -113,7 +111,12 @@ class RoomOptions {
   final bool stopLocalTrackOnUnpublish;
 
   /// Options for end-to-end encryption.
+  @Deprecated('Use encryption instead')
   final E2EEOptions? e2eeOptions;
+
+  /// @experimental
+  /// Options for end-to-end encryption.
+  final E2EEOptions? encryption;
 
   /// fast track publication
   final bool fastPublish;
@@ -134,6 +137,7 @@ class RoomOptions {
     this.dynacast = false,
     this.stopLocalTrackOnUnpublish = true,
     this.e2eeOptions,
+    this.encryption,
     this.enableVisualizer = false,
     this.fastPublish = true,
   });
@@ -149,26 +153,22 @@ class RoomOptions {
     bool? dynacast,
     bool? stopLocalTrackOnUnpublish,
     E2EEOptions? e2eeOptions,
+    E2EEOptions? encryption,
     bool? fastPublish,
   }) {
     return RoomOptions(
-      defaultCameraCaptureOptions:
-          defaultCameraCaptureOptions ?? this.defaultCameraCaptureOptions,
-      defaultScreenShareCaptureOptions: defaultScreenShareCaptureOptions ??
-          this.defaultScreenShareCaptureOptions,
-      defaultAudioCaptureOptions:
-          defaultAudioCaptureOptions ?? this.defaultAudioCaptureOptions,
-      defaultVideoPublishOptions:
-          defaultVideoPublishOptions ?? this.defaultVideoPublishOptions,
-      defaultAudioPublishOptions:
-          defaultAudioPublishOptions ?? this.defaultAudioPublishOptions,
-      defaultAudioOutputOptions:
-          defaultAudioOutputOptions ?? this.defaultAudioOutputOptions,
+      defaultCameraCaptureOptions: defaultCameraCaptureOptions ?? this.defaultCameraCaptureOptions,
+      defaultScreenShareCaptureOptions: defaultScreenShareCaptureOptions ?? this.defaultScreenShareCaptureOptions,
+      defaultAudioCaptureOptions: defaultAudioCaptureOptions ?? this.defaultAudioCaptureOptions,
+      defaultVideoPublishOptions: defaultVideoPublishOptions ?? this.defaultVideoPublishOptions,
+      defaultAudioPublishOptions: defaultAudioPublishOptions ?? this.defaultAudioPublishOptions,
+      defaultAudioOutputOptions: defaultAudioOutputOptions ?? this.defaultAudioOutputOptions,
       adaptiveStream: adaptiveStream ?? this.adaptiveStream,
       dynacast: dynacast ?? this.dynacast,
-      stopLocalTrackOnUnpublish:
-          stopLocalTrackOnUnpublish ?? this.stopLocalTrackOnUnpublish,
+      stopLocalTrackOnUnpublish: stopLocalTrackOnUnpublish ?? this.stopLocalTrackOnUnpublish,
+      // ignore: deprecated_member_use_from_same_package
       e2eeOptions: e2eeOptions ?? this.e2eeOptions,
+      encryption: encryption ?? this.encryption,
       fastPublish: fastPublish ?? this.fastPublish,
     );
   }
@@ -289,34 +289,26 @@ class VideoPublishOptions extends PublishOptions {
         screenShareEncoding: screenShareEncoding ?? this.screenShareEncoding,
         simulcast: simulcast ?? this.simulcast,
         videoSimulcastLayers: videoSimulcastLayers ?? this.videoSimulcastLayers,
-        screenShareSimulcastLayers:
-            screenShareSimulcastLayers ?? this.screenShareSimulcastLayers,
+        screenShareSimulcastLayers: screenShareSimulcastLayers ?? this.screenShareSimulcastLayers,
         videoCodec: videoCodec ?? this.videoCodec,
         backupVideoCodec: backupVideoCodec ?? this.backupVideoCodec,
-        degradationPreference:
-            degradationPreference ?? this.degradationPreference,
+        degradationPreference: degradationPreference ?? this.degradationPreference,
         scalabilityMode: scalabilityMode ?? this.scalabilityMode,
         name: name ?? this.name,
         stream: stream ?? this.stream,
       );
 
   @override
-  String toString() =>
-      '${runtimeType}(videoEncoding: ${videoEncoding}, simulcast: ${simulcast})';
-}
-
-class AudioPreset {
-  static const telephone = 12000;
-  static const speech = 24000;
-  static const music = 48000;
-  static const musicStereo = 64000;
-  static const musicHighQuality = 96000;
-  static const musicHighQualityStereo = 128000;
+  String toString() => '${runtimeType}(videoEncoding: ${videoEncoding}, simulcast: ${simulcast})';
 }
 
 /// Options used when publishing audio.
 class AudioPublishOptions extends PublishOptions {
   static const defaultMicrophoneName = 'microphone';
+
+  /// Preferred encoding parameters.
+  /// Defaults to [AudioEncoding.presetMusic] when not set.
+  final AudioEncoding? encoding;
 
   /// Whether to enable DTX (Discontinuous Transmission) or not.
   /// https://en.wikipedia.org/wiki/Discontinuous_transmission
@@ -326,40 +318,43 @@ class AudioPublishOptions extends PublishOptions {
   /// red (Redundant Audio Data)
   final bool? red;
 
-  /// max audio bitrate
-  final int audioBitrate;
+  /// Mark this audio as originating from a pre-connect buffer.
+  /// Used to populate protobuf audioFeatures (TF_PRECONNECT_BUFFER).
+  final bool preConnect;
 
   const AudioPublishOptions({
     super.name,
     super.stream,
+    this.encoding,
     this.dtx = true,
     this.red = true,
-    this.audioBitrate = AudioPreset.music,
+    this.preConnect = false,
   });
 
   AudioPublishOptions copyWith({
+    AudioEncoding? encoding,
     bool? dtx,
-    int? audioBitrate,
     String? name,
     String? stream,
     bool? red,
+    bool? preConnect,
   }) =>
       AudioPublishOptions(
+        encoding: encoding ?? this.encoding,
         dtx: dtx ?? this.dtx,
-        audioBitrate: audioBitrate ?? this.audioBitrate,
         name: name ?? this.name,
         stream: stream ?? this.stream,
         red: red ?? this.red,
+        preConnect: preConnect ?? this.preConnect,
       );
 
   @override
-  String toString() =>
-      '${runtimeType}(dtx: ${dtx}, audioBitrate: ${audioBitrate}, red: ${red})';
+  String toString() => '${runtimeType}(encoding: ${encoding}, dtx: ${dtx}, red: ${red}, preConnect: ${preConnect})';
 }
 
 final backupCodecs = ['vp8', 'h264'];
 
-final videoCodecs = ['vp8', 'h264', 'vp9', 'av1'];
+final videoCodecs = ['vp8', 'h264', 'h265', 'vp9', 'av1'];
 
 bool isBackupCodec(String codec) {
   return backupCodecs.contains(codec.toLowerCase());

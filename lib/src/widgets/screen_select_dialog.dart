@@ -20,11 +20,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 class ThumbnailWidget extends StatefulWidget {
-  const ThumbnailWidget(
-      {Key? key,
-      required this.source,
-      required this.selected,
-      required this.onTap})
+  const ThumbnailWidget({Key? key, required this.source, required this.selected, required this.onTap})
       : super(key: key);
   final rtc.DesktopCapturerSource source;
   final bool selected;
@@ -43,11 +39,8 @@ class ThumbnailWidgetState extends State<ThumbnailWidget> {
   void initState() {
     super.initState();
     _name = widget.source.name;
-    _thumbnail = widget.source.thumbnail?.isNotEmpty == true
-        ? widget.source.thumbnail
-        : null;
-    _subscriptions
-        .add(widget.source.onThumbnailChanged.stream.listen((thumbnail) {
+    _thumbnail = widget.source.thumbnail?.isNotEmpty == true ? widget.source.thumbnail : null;
+    _subscriptions.add(widget.source.onThumbnailChanged.stream.listen((thumbnail) {
       setState(() {
         _thumbnail = thumbnail;
       });
@@ -62,7 +55,7 @@ class ThumbnailWidgetState extends State<ThumbnailWidget> {
   @override
   void deactivate() {
     for (var element in _subscriptions) {
-      element.cancel();
+      unawaited(element.cancel());
     }
     super.deactivate();
   }
@@ -73,10 +66,7 @@ class ThumbnailWidgetState extends State<ThumbnailWidget> {
       children: [
         Expanded(
             child: Container(
-          decoration: widget.selected
-              ? BoxDecoration(
-                  border: Border.all(width: 2, color: Colors.blueAccent))
-              : null,
+          decoration: widget.selected ? BoxDecoration(border: Border.all(width: 2, color: Colors.blueAccent)) : null,
           child: InkWell(
             onTap: () {
               if (kDebugMode) {
@@ -96,10 +86,7 @@ class ThumbnailWidgetState extends State<ThumbnailWidget> {
         Text(
           _name,
           style: TextStyle(
-              fontSize: 12,
-              color: Colors.black87,
-              fontWeight:
-                  widget.selected ? FontWeight.bold : FontWeight.normal),
+              fontSize: 12, color: Colors.black87, fontWeight: widget.selected ? FontWeight.bold : FontWeight.normal),
         ),
       ],
     );
@@ -108,10 +95,15 @@ class ThumbnailWidgetState extends State<ThumbnailWidget> {
 
 // ignore: must_be_immutable
 class ScreenSelectDialog extends Dialog {
-  ScreenSelectDialog({Key? key}) : super(key: key) {
-    Future.delayed(const Duration(milliseconds: 100), () {
-      _getSources();
-    });
+  ScreenSelectDialog({
+    Key? key,
+    this.titleText = 'Choose what to share',
+    this.screenTabText = 'Entire Screen',
+    this.windowTabText = 'Window',
+    this.cancelText = 'Cancel',
+    this.shareText = 'Share',
+  }) : super(key: key) {
+    Timer(const Duration(milliseconds: 100), _getSources);
     _subscriptions.add(rtc.desktopCapturer.onAdded.stream.listen((source) {
       _sources[source.id] = source;
       _stateSetter?.call(() {});
@@ -122,11 +114,17 @@ class ScreenSelectDialog extends Dialog {
       _stateSetter?.call(() {});
     }));
 
-    _subscriptions
-        .add(rtc.desktopCapturer.onThumbnailChanged.stream.listen((source) {
+    _subscriptions.add(rtc.desktopCapturer.onThumbnailChanged.stream.listen((source) {
       _stateSetter?.call(() {});
     }));
   }
+
+  final String titleText;
+  final String screenTabText;
+  final String windowTabText;
+  final String cancelText;
+  final String shareText;
+
   final Map<String, rtc.DesktopCapturerSource> _sources = {};
   rtc.SourceType _sourceType = rtc.SourceType.Screen;
   rtc.DesktopCapturerSource? _selectedSource;
@@ -134,34 +132,33 @@ class ScreenSelectDialog extends Dialog {
   StateSetter? _stateSetter;
   Timer? _timer;
 
-  void _ok(BuildContext context) {
+  Future<void> _ok(BuildContext context) async {
     _timer?.cancel();
     for (var element in _subscriptions) {
-      element.cancel();
+      await element.cancel();
     }
     Navigator.pop<rtc.DesktopCapturerSource>(context, _selectedSource);
   }
 
-  void _cancel(BuildContext context) {
+  Future<void> _cancel(BuildContext context) async {
     _timer?.cancel();
     for (var element in _subscriptions) {
-      element.cancel();
+      await element.cancel();
     }
     Navigator.pop<rtc.DesktopCapturerSource>(context, null);
   }
 
   Future<void> _getSources() async {
     try {
-      var sources = await rtc.desktopCapturer.getSources(types: [_sourceType]);
+      final sources = await rtc.desktopCapturer.getSources(types: [_sourceType]);
       for (var element in sources) {
         if (kDebugMode) {
-          print(
-              'name: ${element.name}, id: ${element.id}, type: ${element.type}');
+          print('name: ${element.name}, id: ${element.id}, type: ${element.type}');
         }
       }
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(seconds: 3), (timer) {
-        rtc.desktopCapturer.updateSources(types: [_sourceType]);
+        unawaited(rtc.desktopCapturer.updateSources(types: [_sourceType]));
       });
       _sources.clear();
       for (var element in sources) {
@@ -191,18 +188,18 @@ class ScreenSelectDialog extends Dialog {
               padding: const EdgeInsets.all(10),
               child: Stack(
                 children: <Widget>[
-                  const Align(
+                  Align(
                     alignment: Alignment.topLeft,
                     child: Text(
-                      'Choose what to share',
-                      style: TextStyle(fontSize: 16, color: Colors.black87),
+                      titleText,
+                      style: const TextStyle(fontSize: 16, color: Colors.black87),
                     ),
                   ),
                   Align(
                     alignment: Alignment.topRight,
                     child: InkWell(
                       child: const Icon(Icons.close),
-                      onTap: () => _cancel(context),
+                      onTap: () async => await _cancel(context),
                     ),
                   ),
                 ],
@@ -221,26 +218,22 @@ class ScreenSelectDialog extends Dialog {
                       child: Column(
                         children: <Widget>[
                           Container(
-                            constraints:
-                                const BoxConstraints.expand(height: 24),
+                            constraints: const BoxConstraints.expand(height: 24),
                             child: TabBar(
-                                onTap: (value) => Future.delayed(
-                                        const Duration(milliseconds: 300), () {
-                                      _sourceType = value == 0
-                                          ? rtc.SourceType.Screen
-                                          : rtc.SourceType.Window;
-                                      _getSources();
+                                onTap: (value) => Timer(const Duration(milliseconds: 300), () {
+                                      _sourceType = value == 0 ? rtc.SourceType.Screen : rtc.SourceType.Window;
+                                      unawaited(_getSources());
                                     }),
-                                tabs: const [
+                                tabs: [
                                   Tab(
                                       child: Text(
-                                    'Entire Screen',
-                                    style: TextStyle(color: Colors.black54),
+                                    screenTabText,
+                                    style: const TextStyle(color: Colors.black54),
                                   )),
                                   Tab(
                                       child: Text(
-                                    'Window',
-                                    style: TextStyle(color: Colors.black54),
+                                    windowTabText,
+                                    style: const TextStyle(color: Colors.black54),
                                   )),
                                 ]),
                           ),
@@ -255,9 +248,7 @@ class ScreenSelectDialog extends Dialog {
                                     crossAxisSpacing: 8,
                                     crossAxisCount: 2,
                                     children: _sources.entries
-                                        .where((element) =>
-                                            element.value.type ==
-                                            rtc.SourceType.Screen)
+                                        .where((element) => element.value.type == rtc.SourceType.Screen)
                                         .map((e) => ThumbnailWidget(
                                               onTap: (source) {
                                                 setState(() {
@@ -265,8 +256,7 @@ class ScreenSelectDialog extends Dialog {
                                                 });
                                               },
                                               source: e.value,
-                                              selected: _selectedSource?.id ==
-                                                  e.value.id,
+                                              selected: _selectedSource?.id == e.value.id,
                                             ))
                                         .toList(),
                                   )),
@@ -276,9 +266,7 @@ class ScreenSelectDialog extends Dialog {
                                     crossAxisSpacing: 8,
                                     crossAxisCount: 3,
                                     children: _sources.entries
-                                        .where((element) =>
-                                            element.value.type ==
-                                            rtc.SourceType.Window)
+                                        .where((element) => element.value.type == rtc.SourceType.Window)
                                         .map((e) => ThumbnailWidget(
                                               onTap: (source) {
                                                 setState(() {
@@ -286,8 +274,7 @@ class ScreenSelectDialog extends Dialog {
                                                 });
                                               },
                                               source: e.value,
-                                              selected: _selectedSource?.id ==
-                                                  e.value.id,
+                                              selected: _selectedSource?.id == e.value.id,
                                             ))
                                         .toList(),
                                   )),
@@ -305,21 +292,21 @@ class ScreenSelectDialog extends Dialog {
               child: OverflowBar(
                 children: <Widget>[
                   MaterialButton(
-                    child: const Text(
-                      'Cancel',
-                      style: TextStyle(color: Colors.black54),
+                    child: Text(
+                      cancelText,
+                      style: const TextStyle(color: Colors.black54),
                     ),
-                    onPressed: () {
-                      _cancel(context);
+                    onPressed: () async {
+                      await _cancel(context);
                     },
                   ),
                   MaterialButton(
                     color: Theme.of(context).primaryColor,
-                    child: const Text(
-                      'Share',
+                    child: Text(
+                      shareText,
                     ),
-                    onPressed: () {
-                      _ok(context);
+                    onPressed: () async {
+                      await _ok(context);
                     },
                   ),
                 ],

@@ -46,7 +46,7 @@ Include this package to your `pubspec.yaml`
 ```yaml
 ---
 dependencies:
-  livekit_client: <version>
+  livekit_client: ^2.6.2
 ```
 
 ### iOS
@@ -221,7 +221,7 @@ room.localParticipant.setScreenShareEnabled(true);
 
 On Android, you will have to use a [media projection foreground service](https://developer.android.com/develop/background-work/services/fg-service-types#media-projection).
 
-In our example, we use the `flutter_background` package to handle this. In the app's AndroidManifest.xml file, declare the service with the appropriate types and permissions as following:
+In our example, we use the `flutter_background` package to handle this. In the app's AndroidManifest.xml file, declare the service with the appropriate types and permissions as follows:
 
 ```xml title="AndroidManifest.xml"
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -248,7 +248,7 @@ other apps. See [setup guide](https://github.com/flutter-webrtc/flutter-webrtc/w
 
 #### Desktop(Windows/macOS)
 
-On dekstop you can use `ScreenSelectDialog` to select the window or screen you want to share.
+On desktop you can use `ScreenSelectDialog` to select the window or screen you want to share.
 
 ```dart
 try {
@@ -282,10 +282,10 @@ By default, the native platform can support E2EE without any settings, but for f
 # for example app
 dart compile js web/e2ee.worker.dart -o example/web/e2ee.worker.dart.js -m
 # for your project
-export YOU_PROJECT_DIR=your_project_dir
+export YOUR_PROJECT_DIR=your_project_dir
 git clone https://github.com/livekit/client-sdk-flutter.git
 cd client-sdk-flutter && flutter pub get
-dart compile js web/e2ee.worker.dart -o ${YOU_PROJECT_DIR}/web/e2ee.worker.dart.js -m
+dart compile js web/e2ee.worker.dart -o ${YOUR_PROJECT_DIR}/web/e2ee.worker.dart.js -m
 ```
 
 ### Advanced track manipulation
@@ -460,7 +460,7 @@ class _VideoViewState extends State<VideoView> {
 
 ### Mute, unmute local tracks
 
-On `LocalTrackPublication`s, you could control if the track is muted by setting its `muted` property. Changing the mute status will generate an `onTrackMuted` or `onTrack Unmuted` delegate call for the local participant. Other participant will receive the status change as well.
+On `LocalTrackPublication`s, you can control whether the track is muted by setting its `muted` property. Changing the mute status will emit a `TrackMutedEvent` or `TrackUnmutedEvent` for the local participant. Other participants will receive the status change as well.
 
 ```dart
 // mute track
@@ -494,9 +494,9 @@ A huge thank you to [flutter-webrtc](https://github.com/flutter-webrtc/flutter-w
 <br/><table>
 <thead><tr><th colspan="2">LiveKit Ecosystem</th></tr></thead>
 <tbody>
-<tr><td>LiveKit SDKs</td><td><a href="https://github.com/livekit/client-sdk-js">Browser</a> · <a href="https://github.com/livekit/client-sdk-swift">iOS/macOS/visionOS</a> · <a href="https://github.com/livekit/client-sdk-android">Android</a> · <b>Flutter</b> · <a href="https://github.com/livekit/client-sdk-react-native">React Native</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/client-sdk-unity">Unity</a> · <a href="https://github.com/livekit/client-sdk-unity-web">Unity (WebGL)</a></td></tr><tr></tr>
+<tr><td>LiveKit SDKs</td><td><a href="https://github.com/livekit/client-sdk-js">Browser</a> · <a href="https://github.com/livekit/client-sdk-swift">iOS/macOS/visionOS</a> · <a href="https://github.com/livekit/client-sdk-android">Android</a> · <b>Flutter</b> · <a href="https://github.com/livekit/client-sdk-react-native">React Native</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/client-sdk-unity">Unity</a> · <a href="https://github.com/livekit/client-sdk-unity-web">Unity (WebGL)</a> · <a href="https://github.com/livekit/client-sdk-esp32">ESP32</a></td></tr><tr></tr>
 <tr><td>Server APIs</td><td><a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/server-sdk-go">Golang</a> · <a href="https://github.com/livekit/server-sdk-ruby">Ruby</a> · <a href="https://github.com/livekit/server-sdk-kotlin">Java/Kotlin</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/agence104/livekit-server-sdk-php">PHP (community)</a> · <a href="https://github.com/pabloFuente/livekit-server-sdk-dotnet">.NET (community)</a></td></tr><tr></tr>
-<tr><td>UI Components</td><td><a href="https://github.com/livekit/components-js">React</a> · <a href="https://github.com/livekit/components-android">Android Compose</a> · <a href="https://github.com/livekit/components-swift">SwiftUI</a></td></tr><tr></tr>
+<tr><td>UI Components</td><td><a href="https://github.com/livekit/components-js">React</a> · <a href="https://github.com/livekit/components-android">Android Compose</a> · <a href="https://github.com/livekit/components-swift">SwiftUI</a> · <a href="https://github.com/livekit/components-flutter">Flutter</a></td></tr><tr></tr>
 <tr><td>Agents Frameworks</td><td><a href="https://github.com/livekit/agents">Python</a> · <a href="https://github.com/livekit/agents-js">Node.js</a> · <a href="https://github.com/livekit/agent-playground">Playground</a></td></tr><tr></tr>
 <tr><td>Services</td><td><a href="https://github.com/livekit/livekit">LiveKit server</a> · <a href="https://github.com/livekit/egress">Egress</a> · <a href="https://github.com/livekit/ingress">Ingress</a> · <a href="https://github.com/livekit/sip">SIP</a></td></tr><tr></tr>
 <tr><td>Resources</td><td><a href="https://docs.livekit.io">Docs</a> · <a href="https://github.com/livekit-examples">Example apps</a> · <a href="https://livekit.io/cloud">Cloud</a> · <a href="https://docs.livekit.io/home/self-hosting/deployment">Self-hosting</a> · <a href="https://github.com/livekit/livekit-cli">CLI</a></td></tr>

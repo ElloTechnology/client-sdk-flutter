@@ -19,7 +19,7 @@ import 'package:flutter/material.dart';
 import '../extensions.dart';
 import '../participant/participant.dart';
 
-typedef CancelListenFunc = Function();
+typedef CancelListenFunc = Future<void> Function();
 
 /// Protocol version to use when connecting to server.
 /// Usually it's not recommended to change this.
@@ -141,11 +141,21 @@ class RTCConfiguration {
   final RTCIceTransportPolicy? iceTransportPolicy;
   final bool? encodedInsertableStreams;
 
+  /// Allows DSCP (Differentiated Services Code Point) codes to be set on
+  /// outgoing packets for network level QoS.
+  ///
+  /// This is a best effort hint and network routers may ignore DSCP markings.
+  /// Required for `networkPriority` to take effect.
+  ///
+  /// Ignored on web platforms.
+  final bool? isDscpEnabled;
+
   const RTCConfiguration({
     this.iceCandidatePoolSize,
     this.iceServers,
     this.iceTransportPolicy,
     this.encodedInsertableStreams,
+    this.isDscpEnabled,
   });
 
   Map<String, dynamic> toMap() {
@@ -157,13 +167,11 @@ class RTCConfiguration {
     return <String, dynamic>{
       // only supports unified plan
       'sdpSemantics': 'unified-plan',
-      if (encodedInsertableStreams != null)
-        'encodedInsertableStreams': encodedInsertableStreams,
+      if (encodedInsertableStreams != null) 'encodedInsertableStreams': encodedInsertableStreams,
+      if (isDscpEnabled != null) 'enableDscp': isDscpEnabled,
       if (iceServersMap.isNotEmpty) 'iceServers': iceServersMap,
-      if (iceCandidatePoolSize != null)
-        'iceCandidatePoolSize': iceCandidatePoolSize,
-      if (iceTransportPolicy != null)
-        'iceTransportPolicy': iceTransportPolicy!.toStringValue(),
+      if (iceCandidatePoolSize != null) 'iceCandidatePoolSize': iceCandidatePoolSize,
+      if (iceTransportPolicy != null) 'iceTransportPolicy': iceTransportPolicy!.toStringValue(),
     };
   }
 
@@ -173,13 +181,14 @@ class RTCConfiguration {
     List<RTCIceServer>? iceServers,
     RTCIceTransportPolicy? iceTransportPolicy,
     bool? encodedInsertableStreams,
+    bool? isDscpEnabled,
   }) =>
       RTCConfiguration(
         iceCandidatePoolSize: iceCandidatePoolSize ?? this.iceCandidatePoolSize,
         iceServers: iceServers ?? this.iceServers,
         iceTransportPolicy: iceTransportPolicy ?? this.iceTransportPolicy,
-        encodedInsertableStreams:
-            encodedInsertableStreams ?? this.encodedInsertableStreams,
+        encodedInsertableStreams: encodedInsertableStreams ?? this.encodedInsertableStreams,
+        isDscpEnabled: isDscpEnabled ?? this.isDscpEnabled,
       );
 }
 

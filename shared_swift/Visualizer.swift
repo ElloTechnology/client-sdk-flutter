@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,24 +26,23 @@ import UIKit
 #endif
 
 public class Visualizer: NSObject, RTCAudioRenderer, FlutterStreamHandler {
-    
     private var eventSink: FlutterEventSink?
-    
+
     private var channel: FlutterEventChannel?
-    
-    public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        self.eventSink = events
+
+    public func onListen(withArguments _: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        eventSink = events
         return nil
     }
-    
-    public func onCancel(withArguments arguments: Any?) -> FlutterError? {
+
+    public func onCancel(withArguments _: Any?) -> FlutterError? {
         eventSink = nil
         return nil
     }
-    
+
     public let isCentered: Bool
     public let smoothingFactor: Float
-
+    public let smoothTransition: Bool
     public var bands: [Float]
 
     private let _processor: AudioVisualizeProcessor
@@ -53,11 +52,13 @@ public class Visualizer: NSObject, RTCAudioRenderer, FlutterStreamHandler {
                 binaryMessenger: FlutterBinaryMessenger,
                 bandCount: Int = 7,
                 isCentered: Bool = true,
+                smoothTransition: Bool = true,
                 smoothingFactor: Float = 0.3,
                 visualizerId: String)
     {
         self.isCentered = isCentered
         self.smoothingFactor = smoothingFactor
+        self.smoothTransition = smoothTransition
         bands = Array(repeating: 0.0, count: bandCount)
         _processor = AudioVisualizeProcessor(bandsCount: bandCount)
         _track = track
@@ -84,11 +85,14 @@ public class Visualizer: NSObject, RTCAudioRenderer, FlutterStreamHandler {
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            
-            self.bands = zip(self.bands, newBands).map { old, new in
-                self._smoothTransition(from: old, to: new, factor: self.smoothingFactor)
+
+            bands = zip(bands, newBands).map { old, new in
+                if self.smoothTransition {
+                    return self._smoothTransition(from: old, to: new, factor: self.smoothingFactor)
+                }
+                return new
             }
-            self.eventSink?(self.bands)
+            eventSink?(bands)
         }
     }
 

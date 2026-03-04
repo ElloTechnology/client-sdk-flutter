@@ -15,29 +15,46 @@
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:meta/meta.dart';
 
+import 'priority.dart';
+
 /// A type that represents video encoding information.
 @immutable
 class VideoEncoding implements Comparable<VideoEncoding> {
+  /// Maximum framerate for the video track.
   final int maxFramerate;
+
+  /// Maximum bitrate for the video track.
   final int maxBitrate;
+
+  /// Priority for bandwidth allocation.
+  final Priority? bitratePriority;
+
+  /// Priority for DSCP marking. Requires `RTCConfiguration.isDscpEnabled` to be true.
+  final Priority? networkPriority;
 
   const VideoEncoding({
     required this.maxFramerate,
     required this.maxBitrate,
+    this.bitratePriority,
+    this.networkPriority,
   });
 
   VideoEncoding copyWith({
     int? maxFramerate,
     int? maxBitrate,
+    Priority? bitratePriority,
+    Priority? networkPriority,
   }) =>
       VideoEncoding(
         maxFramerate: maxFramerate ?? this.maxFramerate,
         maxBitrate: maxBitrate ?? this.maxBitrate,
+        bitratePriority: bitratePriority ?? this.bitratePriority,
+        networkPriority: networkPriority ?? this.networkPriority,
       );
 
   @override
   String toString() =>
-      '${runtimeType}(maxFramerate: ${maxFramerate}, maxBitrate: ${maxBitrate})';
+      '${runtimeType}(maxFramerate: ${maxFramerate}, maxBitrate: ${maxBitrate}, bitratePriority: ${bitratePriority}, networkPriority: ${networkPriority})';
 
   // ----------------------------------------------------------------------
   // equality
@@ -47,10 +64,12 @@ class VideoEncoding implements Comparable<VideoEncoding> {
       identical(this, other) ||
       other is VideoEncoding &&
           maxFramerate == other.maxFramerate &&
-          maxBitrate == other.maxBitrate;
+          maxBitrate == other.maxBitrate &&
+          bitratePriority == other.bitratePriority &&
+          networkPriority == other.networkPriority;
 
   @override
-  int get hashCode => Object.hash(maxFramerate, maxBitrate);
+  int get hashCode => Object.hash(maxFramerate, maxBitrate, bitratePriority, networkPriority);
 
   // ----------------------------------------------------------------------
   // Comparable
@@ -58,13 +77,18 @@ class VideoEncoding implements Comparable<VideoEncoding> {
   @override
   int compareTo(VideoEncoding other) {
     // compare bitrates
-    final result = maxBitrate.compareTo(other.maxBitrate);
-    // if bitrates are the same, compare by fps
-    if (result == 0) {
-      return maxFramerate.compareTo(other.maxFramerate);
-    }
+    var result = maxBitrate.compareTo(other.maxBitrate);
+    if (result != 0) return result;
 
-    return result;
+    // compare by fps
+    result = maxFramerate.compareTo(other.maxFramerate);
+    if (result != 0) return result;
+
+    // compare by priority fields for consistency with == and hashCode
+    result = (bitratePriority?.index ?? -1).compareTo(other.bitratePriority?.index ?? -1);
+    if (result != 0) return result;
+
+    return (networkPriority?.index ?? -1).compareTo(other.networkPriority?.index ?? -1);
   }
 }
 
@@ -81,5 +105,7 @@ extension VideoEncodingExt on VideoEncoding {
         maxFramerate: maxFramerate,
         maxBitrate: maxBitrate,
         numTemporalLayers: numTemporalLayers,
+        priority: bitratePriority?.toRtcpPriorityType() ?? rtc.RTCPriorityType.low,
+        networkPriority: networkPriority?.toRtcpPriorityType(),
       );
 }
