@@ -23,6 +23,8 @@ import io.flutter.plugin.common.EventChannel
 import org.webrtc.AudioTrack
 import org.webrtc.AudioTrackSink
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.*
 
 class Visualizer(
@@ -38,6 +40,11 @@ class Visualizer(
     private var audioTrack: LKAudioTrack? = audioTrack
     private var amplitudes: FloatArray = FloatArray(0)
     private var bands: FloatArray
+    // Latest-value coalescing: onData fires ~50x/sec per track on the audio thread.
+    // Instead of posting one handler message per call, we store the latest bands atomically
+    // and schedule at most one drain per Looper cycle. ~50 calls → 1 main-thread message.
+    private val latestBands = AtomicReference<FloatArray?>(null)
+    private val postScheduled = AtomicBoolean(false)
     private var loPass: Int = 0
     private var hiPass: Int = 80
 
@@ -83,8 +90,20 @@ class Visualizer(
           smoothTransition(value, amplitudes[index], 0.3f)
         }.toFloatArray()
 
-        handler.post {
-            eventSink?.success(bands)
+        // Store latest bands; only the first call after a drain posts to the main thread.
+        // set() is atomic — overwrites any previous value so only the newest frame survives.
+        latestBands.set(bands)
+        // compareAndSet(false, true): atomically checks if postScheduled is false (no pending
+        // handler message) and flips it to true. Returns true only for the first caller,
+        // so exactly one handler.post is scheduled per Looper cycle.
+        if (postScheduled.compareAndSet(false, true)) {
+            handler.post {
+                // Reset the flag so the next onData call after this drain can schedule again.
+                postScheduled.set(false)
+                // getAndSet(null): atomically grabs the most recent value and clears it,
+                // so we send only the latest frame to Dart; intermediate frames are skipped.
+                latestBands.getAndSet(null)?.let { eventSink?.success(it) }
+            }
         }
     }
 
