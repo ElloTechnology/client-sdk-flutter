@@ -15,6 +15,7 @@
 // ignore_for_file: deprecated_member_use_from_same_package
 
 import 'dart:async';
+import 'dart:developer';
 import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
@@ -225,6 +226,8 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
     FastConnectOptions? fastConnectOptions,
     RegionUrlProvider? regionUrlProvider,
   }) async {
+    Timeline.startSync('LK::Engine::connect');
+    try {
     this.url = url;
     this.token = token;
     // update new options (if exists)
@@ -241,29 +244,35 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
 
     try {
       // wait for socket to connect rtc server
+      Timeline.startSync('LK::Engine::connect::signalConnect');
       await signalClient.connect(
         url,
         token,
         connectOptions: this.connectOptions,
         roomOptions: this.roomOptions,
       );
+      Timeline.finishSync();
 
       // wait for join response
+      Timeline.startSync('LK::Engine::connect::waitJoinResponse');
       await events.waitFor<EngineJoinResponseEvent>(
         duration: this.connectOptions.timeouts.connection,
         onTimeout: () => throw ConnectException('Timed out waiting for SignalJoinResponseEvent',
             reason: ConnectionErrorReason.Timeout),
       );
+      Timeline.finishSync();
 
       logger.fine('Waiting for engine to connect...');
 
       // wait until primary pc is connected
+      Timeline.startSync('LK::Engine::connect::waitPeerConnect');
       await events.waitFor<EnginePeerStateUpdatedEvent>(
         filter: (event) => event.isPrimary && event.state.isConnected(),
         duration: this.connectOptions.timeouts.connection,
         onTimeout: () => throw MediaConnectException(
             'Timed out waiting for PeerConnection to connect, please check your network for ice connectivity'),
       );
+      Timeline.finishSync();
       events.emit(const EngineConnectedEvent());
     } catch (error) {
       logger.fine('Connect Error $error');
@@ -272,6 +281,9 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
         reason: DisconnectReason.joinFailure,
       ));
       rethrow;
+    }
+    } finally {
+      Timeline.finishSync();
     }
   }
 
@@ -389,7 +401,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
 
     for (final item in messagesToResend) {
       try {
-        await channel.send(item.message);
+        channel.send(item.message);
         logger.fine('Resent reliable message with sequence ${item.sequence}');
       } catch (e) {
         logger.warning('Failed to resend reliable message ${item.sequence}: $e');
@@ -402,88 +414,112 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
     lk_models.DataPacket packet, {
     Reliability reliability = Reliability.lossy,
   }) async {
-    // Add sequence number for reliable packets
-    if (reliability == Reliability.reliable) {
-      packet.sequence = _reliableDataSequence++;
-    }
-
-    // construct the data channel message
-    var message = rtc.RTCDataChannelMessage.fromBinary(packet.writeToBuffer());
-
-    if (_subscriberPrimary) {
-      // make sure publisher transport is connected
-      await ensurePublisherConnected();
-
-      // wait for data channel to open (if not already)
-      if (_publisherDataChannelState(reliability) != rtc.RTCDataChannelState.RTCDataChannelOpen) {
-        logger.fine('Waiting for data channel ${reliability} to open...');
-        await events.waitFor<PublisherDataChannelStateUpdatedEvent>(
-          filter: (event) => event.type == reliability,
-          duration: connectOptions.timeouts.connection,
-        );
+    Timeline.startSync('LK::Engine::sendDataPacket', arguments: {
+      'reliability': reliability.toString(),
+    });
+    try {
+      // Add sequence number for reliable packets
+      if (reliability == Reliability.reliable) {
+        packet.sequence = _reliableDataSequence++;
       }
-    }
 
-    // chose data channel
-    final rtc.RTCDataChannel? channel = _publisherDataChannel(reliability);
+      // construct the data channel message
+      Timeline.startSync('LK::Engine::sendDataPacket::serialize');
+      var message = rtc.RTCDataChannelMessage.fromBinary(packet.writeToBuffer());
+      Timeline.finishSync();
 
-    if (channel == null) {
-      throw UnexpectedStateException('Data channel for ${packet.kind.toSDKType()} is null');
-    }
+      if (_subscriberPrimary) {
+        // make sure publisher transport is connected
+        Timeline.startSync('LK::Engine::sendDataPacket::ensurePublisherConnected');
+        await ensurePublisherConnected();
+        Timeline.finishSync();
 
-    if (_e2eeManager != null && _e2eeManager!.isDataChannelEncryptionEnabled) {
-      final encryptablePacket = asEncryptablePacket(packet);
-      if (encryptablePacket != null) {
-        final encryptedData = await _e2eeManager?.encryptData(data: encryptablePacket.writeToBuffer());
-
-        if (encryptedData == null) {
-          logger.warning('Failed to encrypt data packet');
-          return;
+        // wait for data channel to open (if not already)
+        if (_publisherDataChannelState(reliability) != rtc.RTCDataChannelState.RTCDataChannelOpen) {
+          logger.fine('Waiting for data channel ${reliability} to open...');
+          Timeline.startSync('LK::Engine::sendDataPacket::waitForDCOpen');
+          await events.waitFor<PublisherDataChannelStateUpdatedEvent>(
+            filter: (event) => event.type == reliability,
+            duration: connectOptions.timeouts.connection,
+          );
+          Timeline.finishSync();
         }
-
-        final encryptedPacket = lk_models.EncryptedPacket(
-          encryptionType: lk_models.Encryption_Type.GCM,
-          encryptedValue: encryptedData.data,
-          iv: encryptedData.iv,
-          keyIndex: encryptedData.keyIndex,
-        );
-
-        final dataToSend = lk_models.DataPacket(
-          participantIdentity: packet.participantIdentity,
-          kind: packet.kind,
-          encryptedPacket: encryptedPacket,
-          destinationIdentities: packet.destinationIdentities,
-          sequence: packet.hasSequence() ? packet.sequence : null,
-          participantSid: packet.hasParticipantSid() ? packet.participantSid : null,
-        );
-
-        message = rtc.RTCDataChannelMessage.fromBinary(dataToSend.writeToBuffer());
       }
-    }
 
-    // Buffer reliable packets for potential resending
-    if (reliability == Reliability.reliable) {
-      _reliableMessageBuffer.push(BufferedDataPacket(
-        packet: packet,
-        message: message,
-        sequence: packet.sequence,
-      ));
-    }
+      // chose data channel
+      final rtc.RTCDataChannel? channel = _publisherDataChannel(reliability);
 
-    // Don't send during reconnection, but keep message buffered for resending
-    if (_isReconnecting) {
-      logger.fine('Deferring data packet send during reconnection (will resend when resumed)');
-      return;
-    }
+      if (channel == null) {
+        throw UnexpectedStateException('Data channel for ${packet.kind.toSDKType()} is null');
+      }
 
-    logger.fine('sendDataPacket(label:${channel.label}, sequence:${packet.sequence})');
-    await channel.send(message);
+      if (_e2eeManager != null && _e2eeManager!.isDataChannelEncryptionEnabled) {
+        Timeline.startSync('LK::Engine::sendDataPacket::encrypt');
+        final encryptablePacket = asEncryptablePacket(packet);
+        if (encryptablePacket != null) {
+          final encryptedData = await _e2eeManager?.encryptData(data: encryptablePacket.writeToBuffer());
 
-    _dcBufferStatus[reliability] = await channel.getBufferedAmount() <= channel.bufferedAmountLowThreshold!;
+          if (encryptedData == null) {
+            Timeline.finishSync();
+            logger.warning('Failed to encrypt data packet');
+            return;
+          }
 
-    // Align buffer with WebRTC buffer for reliable packets
-    if (reliability == Reliability.reliable) {
-      _reliableMessageBuffer.alignBufferedAmount(await channel.getBufferedAmount());
+          final encryptedPacket = lk_models.EncryptedPacket(
+            encryptionType: lk_models.Encryption_Type.GCM,
+            encryptedValue: encryptedData.data,
+            iv: encryptedData.iv,
+            keyIndex: encryptedData.keyIndex,
+          );
+
+          final dataToSend = lk_models.DataPacket(
+            participantIdentity: packet.participantIdentity,
+            kind: packet.kind,
+            encryptedPacket: encryptedPacket,
+            destinationIdentities: packet.destinationIdentities,
+            sequence: packet.hasSequence() ? packet.sequence : null,
+            participantSid: packet.hasParticipantSid() ? packet.participantSid : null,
+          );
+
+          message = rtc.RTCDataChannelMessage.fromBinary(dataToSend.writeToBuffer());
+        }
+        Timeline.finishSync();
+      }
+
+      // Buffer reliable packets for potential resending
+      if (reliability == Reliability.reliable) {
+        _reliableMessageBuffer.push(BufferedDataPacket(
+          packet: packet,
+          message: message,
+          sequence: packet.sequence,
+        ));
+      }
+
+      // Don't send during reconnection, but keep message buffered for resending
+      if (_isReconnecting) {
+        logger.fine('Deferring data packet send during reconnection (will resend when resumed)');
+        return;
+      }
+
+      logger.fine('sendDataPacket(label:${channel.label}, sequence:${packet.sequence})');
+      Timeline.startSync('LK::Engine::sendDataPacket::dcSend');
+      // Fire-and-forget: send() is synchronous now — no await needed.
+      // The previous await on the null method-channel reply added ~28
+      // unnecessary main-thread dispatches/s.
+      channel.send(message);
+      Timeline.finishSync();
+
+      // Use the locally-cached bufferedAmount instead of polling via method
+      // channel. The value is updated reactively by onBufferedAmountChange
+      // events, avoiding 2-3 Looper round-trips per send (~30 posts/s saved).
+      _dcBufferStatus[reliability] = channel.bufferedAmount! <= channel.bufferedAmountLowThreshold!;
+
+      // Align buffer with WebRTC buffer for reliable packets
+      if (reliability == Reliability.reliable) {
+        _reliableMessageBuffer.alignBufferedAmount(channel.bufferedAmount!);
+      }
+    } finally {
+      Timeline.finishSync();
     }
   }
 
@@ -834,12 +870,26 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
   }
 
   void _onDCMessage(rtc.RTCDataChannelMessage message) async {
+    Timeline.startSync('LK::Engine::onDCMessage');
+    try {
+    final t4 = DateTime.now().microsecondsSinceEpoch;
     // always expect binary
     if (!message.isBinary) {
       logger.warning('Data message is not binary');
       return;
     }
+    Timeline.startSync('LK::Engine::onDCMessage::deserialize');
     final dp = lk_models.DataPacket.fromBuffer(message.binary);
+    Timeline.finishSync();
+    final t5 = DateTime.now().microsecondsSinceEpoch;
+
+    // Build pipeline meta
+    Map<String, dynamic>? meta = message.pipelineMeta;
+    if (meta != null) {
+      meta = Map<String, dynamic>.from(meta);
+      meta['t4_us'] = t4;
+      meta['t5_us'] = t5;
+    }
     if (dp.whichValue() == lk_models.DataPacket_Value.encryptedPacket) {
       if (_e2eeManager == null) {
         logger.warning('Received encrypted packet but E2EE not set up');
@@ -881,7 +931,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
         ..participantSid = dp.participantSid
         ..destinationIdentities.addAll(dp.destinationIdentities);
 
-      _emitDataPacket(newDp, encryptionType: dp.encryptedPacket.encryptionType.toLkType());
+      _emitDataPacket(newDp, encryptionType: dp.encryptedPacket.encryptionType.toLkType(), pipelineMeta: meta);
     } else {
       // Handle sequence numbers for reliable packets (plaintext)
       if (dp.kind == lk_models.DataPacket_Kind.RELIABLE && dp.hasSequence()) {
@@ -900,11 +950,18 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
         }
       }
 
-      _emitDataPacket(dp);
+      _emitDataPacket(dp, pipelineMeta: meta);
+    }
+    } finally {
+      Timeline.finishSync();
     }
   }
 
-  void _emitDataPacket(lk_models.DataPacket dp, {EncryptionType encryptionType = EncryptionType.kNone}) {
+  void _emitDataPacket(lk_models.DataPacket dp, {EncryptionType encryptionType = EncryptionType.kNone, Map<String, dynamic>? pipelineMeta}) {
+    Timeline.startSync('LK::Engine::emitDataPacket', arguments: {
+      'type': dp.whichValue().toString(),
+    });
+    try {
     if (dp.whichValue() == lk_models.DataPacket_Value.speaker) {
       // Speaker packet
       events.emit(EngineActiveSpeakersUpdateEvent(
@@ -916,6 +973,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
         packet: dp.user,
         kind: dp.kind,
         identity: dp.participantIdentity,
+        pipelineMeta: pipelineMeta,
       ));
     } else if (dp.whichValue() == lk_models.DataPacket_Value.transcription) {
       // Transcription packet
@@ -976,6 +1034,9 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
       );
     } else {
       logger.warning('Unknown data packet type: ${dp.whichValue()}');
+    }
+    } finally {
+      Timeline.finishSync();
     }
   }
 

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import 'dart:async';
+import 'dart:developer';
 import 'dart:typed_data' show Uint8List;
 
 import 'package:collection/collection.dart';
@@ -242,6 +243,8 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
     @Deprecated('deprecated, please use roomOptions in Room constructor') RoomOptions? roomOptions,
     FastConnectOptions? fastConnectOptions,
   }) async {
+    Timeline.startSync('LK::Room::connect');
+    try {
     var roomOptions = this.roomOptions;
     connectOptions ??= ConnectOptions();
     _pendingTrackQueue.updateTtl(connectOptions.timeouts.subscribe);
@@ -328,6 +331,9 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       } else {
         rethrow;
       }
+    }
+    } finally {
+      Timeline.finishSync();
     }
   }
 
@@ -903,20 +909,35 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   }
 
   void _onDataMessageEvent(EngineDataPacketReceivedEvent dataPacketEvent) {
-    // participant may be null if data is sent from Server-API
-    RemoteParticipant? senderParticipant;
-    if (dataPacketEvent.identity.isNotEmpty) {
-      senderParticipant = getParticipantByIdentity(dataPacketEvent.identity) as RemoteParticipant?;
+    Timeline.startSync('LK::Room::onDataMessage');
+    try {
+      final t6 = DateTime.now().microsecondsSinceEpoch;
+      // participant may be null if data is sent from Server-API
+      RemoteParticipant? senderParticipant;
+      if (dataPacketEvent.identity.isNotEmpty) {
+        senderParticipant = getParticipantByIdentity(dataPacketEvent.identity) as RemoteParticipant?;
+      }
+
+      Map<String, dynamic>? meta = dataPacketEvent.pipelineMeta;
+      if (meta != null) {
+        meta = Map<String, dynamic>.from(meta);
+        meta['t6_us'] = t6;
+      }
+
+      final event = DataReceivedEvent(
+        participant: senderParticipant,
+        data: dataPacketEvent.packet.payload,
+        topic: dataPacketEvent.packet.topic,
+        pipelineMeta: meta,
+      );
+
+      Timeline.startSync('LK::Room::onDataMessage::emitEvents');
+      senderParticipant?.events.emit(event);
+      events.emit(event);
+      Timeline.finishSync();
+    } finally {
+      Timeline.finishSync();
     }
-
-    final event = DataReceivedEvent(
-      participant: senderParticipant,
-      data: dataPacketEvent.packet.payload,
-      topic: dataPacketEvent.packet.topic,
-    );
-
-    senderParticipant?.events.emit(event);
-    events.emit(event);
   }
 
   Future<bool> _handleParticipantDisconnect(String identity) async {

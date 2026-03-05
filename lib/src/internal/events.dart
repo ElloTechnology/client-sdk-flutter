@@ -567,10 +567,12 @@ class EngineDataPacketReceivedEvent with EngineEvent, InternalEvent {
   final lk_models.UserPacket packet;
   final lk_models.DataPacket_Kind kind;
   final String identity;
+  final Map<String, dynamic>? pipelineMeta;
   const EngineDataPacketReceivedEvent({
     required this.packet,
     required this.kind,
     required this.identity,
+    this.pipelineMeta,
   });
 
   @override
