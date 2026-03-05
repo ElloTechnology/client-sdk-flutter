@@ -38,7 +38,7 @@ class Visualizer(
     private var ffiAudioAnalyzer = FFTAudioAnalyzer()
     private var audioTrack: LKAudioTrack? = audioTrack
     private var amplitudes: FloatArray = FloatArray(0)
-    private var bands: FloatArray
+    private var bands: FloatArray = FloatArray(barCount)
     private var loPass: Int = 0
     private var hiPass: Int = 80
 
@@ -82,7 +82,7 @@ class Visualizer(
 
         if(this.smoothTransition) {
             bands = bands.mapIndexed { index, value ->
-                smoothTransition(value, amplitudes[index], 0.3f)
+                smoothTransitionValue(value, amplitudes[index], 0.3f)
             }.toFloatArray()
         } else {
             bands = amplitudes
@@ -108,7 +108,6 @@ class Visualizer(
     init {
         eventChannel = EventChannel(binaryMessenger, "io.livekit.audio.visualizer/eventChannel-" + audioTrack.id() + "-" + visualizerId)
         eventChannel?.setStreamHandler(this)
-        bands = FloatArray(barCount)
         ffiAudioAnalyzer.configure(audioFormat)
         audioTrack.addSink(this)
     }
@@ -134,7 +133,7 @@ private fun centerBands(bands: FloatArray): FloatArray {
     return centeredBands
 }
 
-private  fun smoothTransition(from: Float, to: Float, factor: Float): Float {
+private fun smoothTransitionValue(from: Float, to: Float, factor: Float): Float {
     val delta = to - from
     val easedFactor = easeInOutCubic(factor)
     return from + delta * easedFactor
