@@ -389,7 +389,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
 
     for (final item in messagesToResend) {
       try {
-        // Fire-and-forget: send() implementation is syncronous and 
+        // Fire-and-forget: send() implementation is synchronous and
         // awaiting causes unneeded main-thread dispatches
         channel.send(item.message);
         logger.fine('Resent reliable message with sequence ${item.sequence}');
@@ -479,7 +479,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
     }
 
     logger.fine('sendDataPacket(label:${channel.label}, sequence:${packet.sequence})');
-    // Fire-and-forget: send() implementation is syncronous and 
+    // Fire-and-forget: send() implementation is synchronous and
     // awaiting causes unneeded main-thread dispatches
     channel.send(message);
 
