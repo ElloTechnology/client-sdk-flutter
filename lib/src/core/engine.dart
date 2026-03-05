@@ -389,6 +389,8 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
 
     for (final item in messagesToResend) {
       try {
+        // Fire-and-forget: send() implementation is syncronous and 
+        // awaiting causes unneeded main-thread dispatches
         channel.send(item.message);
         logger.fine('Resent reliable message with sequence ${item.sequence}');
       } catch (e) {
@@ -477,14 +479,13 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
     }
 
     logger.fine('sendDataPacket(label:${channel.label}, sequence:${packet.sequence})');
-    // Fire-and-forget: send() is synchronous — no await needed.
-    // The previous await on the null method-channel reply added ~28
-    // unnecessary main-thread dispatches/s.
+    // Fire-and-forget: send() implementation is syncronous and 
+    // awaiting causes unneeded main-thread dispatches
     channel.send(message);
 
     // Use the locally-cached bufferedAmount instead of polling via method
     // channel. The value is updated reactively by onBufferedAmountChange
-    // events, avoiding 2-3 Looper round-trips per send (~30 posts/s saved).
+    // events, avoiding 2-3 Looper round-trips per send.
     _dcBufferStatus[reliability] = channel.bufferedAmount! <= channel.bufferedAmountLowThreshold!;
 
     // Align buffer with WebRTC buffer for reliable packets
