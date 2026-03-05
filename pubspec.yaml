@@ -45,6 +45,7 @@ dependencies:
   dart_jsonwebtoken: ^3.3.1
   json_annotation: ^4.9.0
 
+  # Fix version to avoid version conflicts between WebRTC-SDK pods, which both this package and flutter_webrtc depend on.
   flutter_webrtc:
     git:
       url: git@github.com:ElloTechnology/flutter-webrtc.git
