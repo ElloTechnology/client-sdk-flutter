@@ -15,7 +15,6 @@
 // ignore_for_file: deprecated_member_use_from_same_package
 
 import 'dart:async';
-import 'dart:developer';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data' show Uint8List;
@@ -605,29 +604,18 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
     List<String>? destinationIdentities,
     String? topic,
   }) async {
-    Timeline.startSync('LK::publishData', arguments: {
-      'reliable': (reliable == true).toString(),
-      'topic': topic ?? '',
-      'dataLength': data.length.toString(),
-    });
-    try {
-      final publishReliably = reliable == true;
-      Timeline.startSync('LK::publishData::buildPacket');
-      final packet = lk_models.DataPacket(
-        kind: publishReliably ? lk_models.DataPacket_Kind.RELIABLE : lk_models.DataPacket_Kind.LOSSY,
-        user: lk_models.UserPacket(
-          payload: data,
-          participantIdentity: identity,
-          destinationIdentities: destinationIdentities,
-          topic: topic,
-        ),
-      );
-      Timeline.finishSync();
+    final publishReliably = reliable == true;
+    final packet = lk_models.DataPacket(
+      kind: publishReliably ? lk_models.DataPacket_Kind.RELIABLE : lk_models.DataPacket_Kind.LOSSY,
+      user: lk_models.UserPacket(
+        payload: data,
+        participantIdentity: identity,
+        destinationIdentities: destinationIdentities,
+        topic: topic,
+      ),
+    );
 
-      await room.engine.sendDataPacket(packet, reliability: publishReliably ? Reliability.reliable : Reliability.lossy);
-    } finally {
-      Timeline.finishSync();
-    }
+    await room.engine.sendDataPacket(packet, reliability: publishReliably ? Reliability.reliable : Reliability.lossy);
   }
 
   /// Sets and updates the metadata of the local participant.

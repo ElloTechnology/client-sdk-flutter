@@ -14,7 +14,6 @@
 
 import 'dart:async';
 import 'dart:collection';
-import 'dart:developer';
 
 import 'package:logging/logging.dart';
 import 'package:meta/meta.dart';
@@ -72,9 +71,7 @@ class EventsEmitter<T> extends EventsListenable<T> {
       return;
     }
     // emit the event
-    Timeline.startSync('LK::EventsEmitter::emit::${event.runtimeType}');
     streamCtrl.add(event);
-    Timeline.finishSync();
   }
 
   @internal

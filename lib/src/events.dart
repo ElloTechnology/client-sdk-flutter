@@ -423,12 +423,10 @@ class DataReceivedEvent with RoomEvent, ParticipantEvent {
   final RemoteParticipant? participant;
   final List<int> data;
   final String? topic;
-  final Map<String, dynamic>? pipelineMeta;
   const DataReceivedEvent({
     required this.participant,
     required this.data,
     required this.topic,
-    this.pipelineMeta,
   });
 
   @override
