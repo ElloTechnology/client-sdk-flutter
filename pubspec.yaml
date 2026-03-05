@@ -49,7 +49,7 @@ dependencies:
   flutter_webrtc:
     git:
       url: git@github.com:ElloTechnology/flutter-webrtc.git
-      ref: 9f3f340dc7257ccb1e39306613db9a8e64f7f70a
+      ref: 2c6bbbc52035cf4e2670995df1856f3a8e909c40
   dart_webrtc: ^1.7.0
 
 dev_dependencies:
