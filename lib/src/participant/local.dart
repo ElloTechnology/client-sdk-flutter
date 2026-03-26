@@ -1118,7 +1118,9 @@ extension RPCMethods on LocalParticipant {
       );
 
       final ackTimer = Timer(maxRoundTripLatency, () {
-        completer.completeError(RpcError.builtIn(RpcError.connectionTimeout));
+        if (!completer.isCompleted) {
+          completer.completeError(RpcError.builtIn(RpcError.connectionTimeout));
+        }
         _pendingResponses.remove(requestId);
       });
 
@@ -1127,19 +1129,22 @@ extension RPCMethods on LocalParticipant {
       };
 
       final responseTimer = Timer(params.responseTimeoutMs, () {
-        completer.completeError(RpcError.builtIn(RpcError.responseTimeout));
+        if (!completer.isCompleted) {
+          completer.completeError(RpcError.builtIn(RpcError.responseTimeout));
+        }
         _pendingResponses.remove(requestId);
       });
 
       _pendingResponses[requestId] = (String? response, RpcError? error) {
         responseTimer.cancel();
+        ackTimer.cancel();
+        _pendingAcks.remove(requestId);
+        if (completer.isCompleted) return;
         if (error != null) {
           completer.completeError(error);
         } else {
           completer.complete(response!);
         }
-        ackTimer.cancel();
-        _pendingAcks.remove(requestId);
       };
     } catch (e) {
       if (!completer.isCompleted) {

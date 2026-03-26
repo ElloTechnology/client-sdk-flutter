@@ -76,8 +76,16 @@ class LiveKitWebSocketWeb extends LiveKitWebSocket {
   ]) async {
     final completer = Completer<LiveKitWebSocketWeb>();
     final ws = web.WebSocket(uri.toString());
-    ws.onOpen.listen((_) => completer.complete(LiveKitWebSocketWeb._(ws, options)));
-    ws.onError.listen((e) => completer.completeError(WebSocketException('Failed to connect', e)));
+    ws.onOpen.listen((_) {
+      if (!completer.isCompleted) {
+        completer.complete(LiveKitWebSocketWeb._(ws, options));
+      }
+    });
+    ws.onError.listen((e) {
+      if (!completer.isCompleted) {
+        completer.completeError(WebSocketException('Failed to connect', e));
+      }
+    });
     return completer.future;
   }
 }
