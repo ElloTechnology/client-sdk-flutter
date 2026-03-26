@@ -51,6 +51,15 @@ class Native {
   }
 
   @internal
+  static Future<void> warmupFFT() async {
+    try {
+      await channel.invokeMethod('warmupFFT');
+    } catch (e) {
+      logger.warning('warmupFFT failed (non-fatal): $e');
+    }
+  }
+
+  @internal
   static Future<bool> startVisualizer(
     String trackId, {
     bool isCentered = true,
