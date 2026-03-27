@@ -63,12 +63,9 @@ public class LiveKitPlugin: NSObject, FlutterPlugin {
         let messenger = registrar.messenger()
         #endif
 
-        let taskQueue = messenger.makeBackgroundTaskQueue?()
         let channel = FlutterMethodChannel(
             name: "livekit_client",
-            binaryMessenger: messenger,
-            codec: FlutterStandardMethodCodec.sharedInstance(),
-            taskQueue: taskQueue
+            binaryMessenger: messenger
         )
         let instance = LiveKitPlugin()
         instance.binaryMessenger = messenger
