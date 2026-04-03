@@ -25,8 +25,11 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 
+import io.flutter.plugin.common.StandardMethodCodec
+
 import com.cloudwebrtc.webrtc.FlutterWebRTCPlugin
 import com.cloudwebrtc.webrtc.audio.LocalAudioTrack
+import com.paramsen.noise.Noise
 import io.flutter.plugin.common.BinaryMessenger
 import org.webrtc.AudioTrack
 
@@ -43,7 +46,13 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
   private lateinit var channel: MethodChannel
 
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-    channel = MethodChannel(flutterPluginBinding.binaryMessenger, "livekit_client")
+    val taskQueue = flutterPluginBinding.binaryMessenger.makeBackgroundTaskQueue()
+    channel = MethodChannel(
+        flutterPluginBinding.binaryMessenger,
+        "livekit_client",
+        StandardMethodCodec.INSTANCE,
+        taskQueue
+    )
     channel.setMethodCallHandler(this)
     binaryMessenger = flutterPluginBinding.binaryMessenger
   }
@@ -210,6 +219,15 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
     result.success(true)
   }
 
+  private fun handleWarmupFFT(@NonNull result: Result) {
+    try {
+      Noise.real(FFTAudioAnalyzer.SAMPLE_SIZE)
+      result.success(null)
+    } catch (e: Exception) {
+      result.success(null)
+    }
+  }
+
   override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
     when (call.method) {
       "startVisualizer" -> {
@@ -226,6 +244,10 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
 
       "stopAudioRenderer" -> {
         handleStopAudioRenderer(call, result)
+      }
+
+      "warmupFFT" -> {
+        handleWarmupFFT(result)
       }
 
       else -> {
