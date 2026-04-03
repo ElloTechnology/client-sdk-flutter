@@ -142,9 +142,7 @@ class FFTAudioAnalyzer {
     }
 
     private fun processFFT(buffer: ByteBuffer) {
-        if (noise == null) {
-            return
-        }
+        val noise = noise ?: return
         srcBuffer.put(buffer.array())
         srcBufferPosition += buffer.array().size
         // Since this is PCM 16 bit, each sample will be 2 bytes.
@@ -165,7 +163,7 @@ class FFTAudioAnalyzer {
             srcBufferPosition -= bytesToProcess
             srcBuffer.position(srcBufferPosition)
             val dst = FloatArray(SAMPLE_SIZE + 2)
-            val fft = noise?.fft(src, dst)!!
+            val fft = noise.fft(src, dst)
 
             this.fft = fft
         }
