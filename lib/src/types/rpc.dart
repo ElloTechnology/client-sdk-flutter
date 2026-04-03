@@ -16,11 +16,18 @@ class PerformRpcParams {
   /// Default: 15000 ms.
   Duration responseTimeoutMs;
 
+  /// Timeout for receiving an ACK from the server after sending the RPC request.
+  /// On low-end devices where the Dart event loop may be starved, increase this
+  /// to prevent premature connectionTimeout (1501) errors.
+  /// Default: 7 seconds (original SDK behavior).
+  Duration? ackTimeout;
+
   PerformRpcParams({
     required this.destinationIdentity,
     required this.method,
     required this.payload,
     this.responseTimeoutMs = const Duration(milliseconds: 15000),
+    this.ackTimeout,
   });
 }
 
