@@ -68,6 +68,12 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
   // RPC Pending Responses
   final Map<String, Function(String? payload, RpcError? error)> _pendingResponses = {};
 
+  /// Number of RPCs waiting for an acknowledgement from the remote side.
+  int get pendingRpcAckCount => _pendingAcks.length;
+
+  /// Number of RPCs that were acknowledged but still awaiting a response.
+  int get pendingRpcResponseCount => _pendingResponses.length;
+
   // Pending signal request responses (keyed by requestId)
   final Map<int, Completer<void>> _pendingSignalRequests = {};
 
@@ -1073,7 +1079,7 @@ extension RPCMethods on LocalParticipant {
       handler(requestId);
       _pendingAcks.remove(requestId);
     } else {
-      logger.warning('Ack received for unexpected RPC request $requestId');
+      logger.warning('Late RPC ACK for request $requestId (timer already fired)');
     }
   }
 
@@ -1088,7 +1094,7 @@ extension RPCMethods on LocalParticipant {
       handler(payload, error);
       _pendingResponses.remove(requestId);
     } else {
-      logger.warning('Response received for unexpected RPC request $requestId');
+      logger.warning('Late RPC response for request $requestId (already timed out)');
     }
   }
 
@@ -1169,7 +1175,7 @@ extension RPCMethods on LocalParticipant {
     final requestId = Uuid().v4();
     final completer = Completer<String>();
 
-    final maxRoundTripLatency = Duration(seconds: 7);
+    final maxRoundTripLatency = params.ackTimeout ?? Duration(seconds: 7);
     final minEffectiveTimeout = const Duration(milliseconds: 1000);
 
     try {
@@ -1188,7 +1194,9 @@ extension RPCMethods on LocalParticipant {
       );
 
       final ackTimer = Timer(maxRoundTripLatency, () {
-        completer.completeError(RpcError.builtIn(RpcError.connectionTimeout));
+        if (!completer.isCompleted) {
+          completer.completeError(RpcError.builtIn(RpcError.connectionTimeout));
+        }
         _pendingResponses.remove(requestId);
       });
 
@@ -1197,19 +1205,22 @@ extension RPCMethods on LocalParticipant {
       };
 
       final responseTimer = Timer(params.responseTimeoutMs, () {
-        completer.completeError(RpcError.builtIn(RpcError.responseTimeout));
+        if (!completer.isCompleted) {
+          completer.completeError(RpcError.builtIn(RpcError.responseTimeout));
+        }
         _pendingResponses.remove(requestId);
       });
 
       _pendingResponses[requestId] = (String? response, RpcError? error) {
         responseTimer.cancel();
+        ackTimer.cancel();
+        _pendingAcks.remove(requestId);
+        if (completer.isCompleted) return;
         if (error != null) {
           completer.completeError(error);
         } else {
           completer.complete(response!);
         }
-        ackTimer.cancel();
-        _pendingAcks.remove(requestId);
       };
     } catch (e) {
       if (!completer.isCompleted) {

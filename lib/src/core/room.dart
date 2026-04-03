@@ -72,6 +72,33 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   ConnectOptions get connectOptions => engine.connectOptions;
   RoomOptions get roomOptions => engine.roomOptions;
 
+  /// Buffered bytes on the reliable publisher data channel, or null if not open.
+  int? get reliableBufferedAmount => engine.reliableBufferedAmount;
+
+  /// Whether the engine is currently reconnecting.
+  bool get isReconnectingTransport => engine.isReconnectingTransport;
+
+  /// Monotonic reliable data send sequence number.
+  int get reliableSendSequence => engine.reliableSendSequence;
+
+  /// Packet count in the reliable reconnection buffer.
+  int get reliableBufferPacketCount => engine.reliableBufferPacketCount;
+
+  /// Utilization ratio (0.0–1.0) of the reliable reconnection buffer.
+  double get reliableBufferUtilization => engine.reliableBufferUtilization;
+
+  /// Cumulative number of data packets sent.
+  int get dataPublishCount => engine.dataPublishCount;
+
+  /// Cumulative bytes sent via data channel.
+  int get dataPublishByteCount => engine.dataPublishByteCount;
+
+  /// Cumulative data channel send failures.
+  int get dataPublishFailureCount => engine.dataPublishFailureCount;
+
+  /// Reliable DC buffered amount captured immediately after the last send.
+  int? get lastPostSendBufferedAmount => engine.lastPostSendBufferedAmount;
+
   final ParticipantCollection<RemoteParticipant> _remoteParticipants = ParticipantCollection();
   UnmodifiableMapView<String, RemoteParticipant> get remoteParticipants =>
       UnmodifiableMapView(_remoteParticipants.byIdentity);

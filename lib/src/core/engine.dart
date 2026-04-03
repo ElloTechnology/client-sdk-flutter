@@ -168,6 +168,40 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
   final TTLMap<String, int> _reliableReceivedState = TTLMap<String, int>(30000);
   bool _isReconnecting = false;
 
+  /// Buffered bytes on the reliable publisher data channel, or null if not open.
+  int? get reliableBufferedAmount =>
+      _publisherDataChannel(Reliability.reliable)?.bufferedAmount;
+
+  /// Whether the engine is currently in a reconnection attempt.
+  bool get isReconnectingTransport => _isReconnecting;
+
+  /// Monotonic sequence number for reliable data sends.
+  int get reliableSendSequence => _reliableDataSequence;
+
+  /// Number of packets in the reliable reconnection buffer.
+  int get reliableBufferPacketCount => _reliableMessageBuffer.length;
+
+  /// Utilization ratio (0.0–1.0) of the reliable reconnection buffer.
+  double get reliableBufferUtilization => _reliableMessageBuffer.sizeUtilization;
+
+  // Data publish observability counters
+  int _dataPublishCount = 0;
+  int _dataPublishByteCount = 0;
+  int _dataPublishFailureCount = 0;
+  int? _lastPostSendBufferedAmount;
+
+  /// Cumulative number of data packets sent via [sendDataPacket].
+  int get dataPublishCount => _dataPublishCount;
+
+  /// Cumulative bytes sent via [sendDataPacket].
+  int get dataPublishByteCount => _dataPublishByteCount;
+
+  /// Cumulative send failures in [sendDataPacket].
+  int get dataPublishFailureCount => _dataPublishFailureCount;
+
+  /// Reliable DC buffered amount captured immediately after the last send.
+  int? get lastPostSendBufferedAmount => _lastPostSendBufferedAmount;
+
   Completer<void>? _publisherConnectionCompleter;
 
   String? _reliableParticipantKey(lk_models.DataPacket packet) {
@@ -360,10 +394,9 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
       while (!_dcBufferStatus[kind]!) {
         await Future.delayed(const Duration(milliseconds: 10));
       }
-      if (completer.isCompleted) {
-        return;
+      if (!completer.isCompleted) {
+        completer.complete();
       }
-      completer.complete();
     }
 
     return completer.future;
@@ -393,7 +426,8 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
 
     for (final item in messagesToResend) {
       try {
-        await channel.send(item.message);
+        // Fire-and-forget: awaiting causes unneeded main-thread dispatches
+        unawaited(channel.send(item.message));
         logger.fine('Resent reliable message with sequence ${item.sequence}');
       } catch (e) {
         logger.warning('Failed to resend reliable message ${item.sequence}: $e');
@@ -480,14 +514,26 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
       return;
     }
 
+    final byteCount = message.binary.lengthInBytes;
     logger.fine('sendDataPacket(label:${channel.label}, sequence:${packet.sequence})');
-    await channel.send(message);
+    // Fire-and-forget: awaiting causes unneeded main-thread dispatches
+    unawaited(channel.send(message).then((_) {
+      _dataPublishCount++;
+      _dataPublishByteCount += byteCount;
+      _lastPostSendBufferedAmount = channel.bufferedAmount;
+    }).catchError((e) {
+      _dataPublishFailureCount++;
+      logger.warning('Data channel send failed: $e');
+    }));
 
-    _dcBufferStatus[reliability] = await channel.getBufferedAmount() <= channel.bufferedAmountLowThreshold!;
+    // Use the locally-cached bufferedAmount instead of polling via method
+    // channel. The value is updated reactively by onBufferedAmountChange
+    // events, avoiding 2-3 Looper round-trips per send.
+    _dcBufferStatus[reliability] = isBufferStatusLow(reliability) ?? false;
 
     // Align buffer with WebRTC buffer for reliable packets
     if (reliability == Reliability.reliable) {
-      _reliableMessageBuffer.alignBufferedAmount(await channel.getBufferedAmount());
+      _reliableMessageBuffer.alignBufferedAmount(channel.bufferedAmount!);
     }
   }
 
@@ -770,7 +816,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
       // _onDCStateUpdated(Reliability.lossy, state)
       _lossyDCPub?.bufferedAmountLowThreshold = 2 * 1024 * 1024;
       _lossyDCPub?.onBufferedAmountLow = (_) {
-        _dcBufferStatus[Reliability.lossy] = (_lossyDCPub!.bufferedAmount! <= _lossyDCPub!.bufferedAmountLowThreshold!);
+        _dcBufferStatus[Reliability.lossy] = isBufferStatusLow(Reliability.lossy) ?? true;
       };
     } catch (err) {
       logger.severe('[$objectId] createDataChannel() did throw $err');
@@ -789,8 +835,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
           )));
       _reliableDCPub?.bufferedAmountLowThreshold = 2 * 1024 * 1024;
       _reliableDCPub?.onBufferedAmountLow = (_) {
-        _dcBufferStatus[Reliability.reliable] =
-            (_reliableDCPub!.bufferedAmount! <= _reliableDCPub!.bufferedAmountLowThreshold!);
+        _dcBufferStatus[Reliability.reliable] = isBufferStatusLow(Reliability.reliable) ?? true;
       };
     } catch (err) {
       logger.severe('[$objectId] createDataChannel() did throw $err');
