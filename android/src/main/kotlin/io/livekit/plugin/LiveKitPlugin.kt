@@ -31,6 +31,7 @@ import com.cloudwebrtc.webrtc.FlutterWebRTCPlugin
 import com.cloudwebrtc.webrtc.audio.LocalAudioTrack
 import com.paramsen.noise.Noise
 import io.flutter.plugin.common.BinaryMessenger
+import io.livekit.plugin.Visualizer
 import org.webrtc.AudioTrack
 
 /** LiveKitPlugin */
