@@ -329,8 +329,8 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       );
     } catch (e) {
       logger.warning('could not connect to $url $e');
-      if (_regionUrlProvider != null && e is WebSocketException ||
-          (e is ConnectException && e.reason != ConnectionErrorReason.NotAllowed)) {
+      if (_regionUrlProvider != null &&
+          (e is WebSocketException || (e is ConnectException && e.reason != ConnectionErrorReason.NotAllowed))) {
         String? nextUrl;
         try {
           nextUrl = await _regionUrlProvider!.getNextBestRegionUrl();
@@ -998,7 +998,7 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       }
     }
 
-    engine.sendSyncState(
+    await engine.sendSyncState(
       subscription: lk_rtc.UpdateSubscription(
         participantTracks: [],
         trackSids: trackSids,
