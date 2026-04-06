@@ -24,7 +24,7 @@ class AudioProcessors(
   val track: LKAudioTrack
 ) {
   val renderers = mutableMapOf<String, AudioRenderer>()
-  val visualizers = mutableMapOf<String, Visualizer>()
+  val visualizers = mutableMapOf<String, LKVisualizer>()
 
   /**
    * Clean up all processors and release resources

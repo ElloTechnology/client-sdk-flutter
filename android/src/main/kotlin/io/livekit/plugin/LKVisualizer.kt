@@ -25,7 +25,7 @@ import org.webrtc.AudioTrackSink
 import java.nio.ByteBuffer
 import kotlin.math.*
 
-class Visualizer(
+class LKVisualizer(
     private var barCount: Int,
     private var isCentered: Boolean,
     private var smoothTransition: Boolean,

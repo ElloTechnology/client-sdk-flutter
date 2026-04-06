@@ -82,7 +82,7 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       return
     }
 
-    val visualizer = Visualizer(
+    val visualizer = LKVisualizer(
       barCount = barCount,
       isCentered = isCentered,
       smoothTransition = smoothTransition,
