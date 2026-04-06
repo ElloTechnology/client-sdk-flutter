@@ -102,6 +102,7 @@ class NativeAudioConfiguration {
   static final playAndRecordSpeaker = NativeAudioConfiguration(
     appleAudioCategory: AppleAudioCategory.playAndRecord,
     appleAudioCategoryOptions: {
+      AppleAudioCategoryOption.mixWithOthers,
       AppleAudioCategoryOption.allowBluetooth,
       AppleAudioCategoryOption.allowBluetoothA2DP,
       AppleAudioCategoryOption.allowAirPlay,
@@ -112,6 +113,7 @@ class NativeAudioConfiguration {
   static final playAndRecordReceiver = NativeAudioConfiguration(
     appleAudioCategory: AppleAudioCategory.playAndRecord,
     appleAudioCategoryOptions: {
+      AppleAudioCategoryOption.mixWithOthers,
       AppleAudioCategoryOption.allowBluetooth,
       AppleAudioCategoryOption.allowBluetoothA2DP,
       AppleAudioCategoryOption.allowAirPlay,
