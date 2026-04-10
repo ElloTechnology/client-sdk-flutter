@@ -103,11 +103,13 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       return
     }
 
-    // Find and remove visualizer from all processors
-    for (processors in audioProcessors.values) {
+    for ((trackId, processors) in audioProcessors) {
       processors.visualizers[visualizerId]?.let { visualizer ->
         visualizer.stop()
         processors.visualizers.remove(visualizerId)
+      }
+      if (processors.visualizers.isEmpty() && processors.renderers.isEmpty()) {
+        audioProcessors.remove(trackId)
       }
     }
 
@@ -208,11 +210,13 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       return
     }
 
-    // Find and remove renderer from all processors
-    for (processors in audioProcessors.values) {
+    for ((trackId, processors) in audioProcessors) {
       processors.renderers[rendererId]?.let { renderer ->
         renderer.detach()
         processors.renderers.remove(rendererId)
+      }
+      if (processors.visualizers.isEmpty() && processors.renderers.isEmpty()) {
+        audioProcessors.remove(trackId)
       }
     }
 
