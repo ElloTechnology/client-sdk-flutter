@@ -66,6 +66,7 @@ class Native {
     int barCount = 7,
     String visualizerId = '',
     bool smoothTransition = true,
+    int sampleIntervalMs = 0,
   }) async {
     try {
       final result = await channel.invokeMethod<bool>(
@@ -76,6 +77,7 @@ class Native {
           'barCount': barCount,
           'visualizerId': visualizerId,
           'smoothTransition': smoothTransition,
+          'sampleIntervalMs': sampleIntervalMs,
         },
       );
       return result == true;

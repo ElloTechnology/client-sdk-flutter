@@ -29,6 +29,7 @@ class LKVisualizer(
     private var barCount: Int,
     private var isCentered: Boolean,
     private var smoothTransition: Boolean,
+    private var sampleIntervalMs: Int,
     audioTrack: LKAudioTrack,
     binaryMessenger: BinaryMessenger,
     visualizerId: String
@@ -44,6 +45,12 @@ class LKVisualizer(
 
     private var audioFormat = AudioFormat(16, 48000, 1)
 
+    // Tracks the last wall-clock time at which we processed a frame.
+    // When sampleIntervalMs > 0, frames arriving within this interval are
+    // dropped before FFT work runs, so the per-frame FFT cost is skipped
+    // on low-power devices.
+    private var lastProcessedMs: Long = 0L
+
     fun stop() {
         audioTrack?.removeSink(this)
         eventChannel?.setStreamHandler(null)
@@ -58,6 +65,14 @@ class LKVisualizer(
         numberOfFrames: Int,
         absoluteCaptureTimestampMs: Long
     ) {
+        // Subsample guard — skip FFT work on low-power devices.
+        // Must run BEFORE queueInput / fft so the expensive work is avoided.
+        // sampleIntervalMs == 0 preserves existing behavior (FFT on every frame).
+        if (sampleIntervalMs > 0) {
+            val now = System.currentTimeMillis()
+            if (now - lastProcessedMs < sampleIntervalMs) return
+            lastProcessedMs = now
+        }
 
         if (audioFormat.sampleRate != sampleRate || audioFormat.bitsPerSample != bitsPerSample || audioFormat.numberOfChannels != numberOfChannels) {
             audioFormat = AudioFormat(bitsPerSample, sampleRate, numberOfChannels)

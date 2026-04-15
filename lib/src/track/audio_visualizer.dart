@@ -12,10 +12,12 @@ class AudioVisualizerOptions {
   final bool centeredBands;
   final int barCount;
   final bool smoothTransition;
+  final int sampleIntervalMs;
   const AudioVisualizerOptions({
     this.centeredBands = true,
     this.barCount = 7,
     this.smoothTransition = true,
+    this.sampleIntervalMs = 0,
   });
 }
 
