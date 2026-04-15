@@ -74,6 +74,11 @@ class LKVisualizer(
             lastProcessedMs = now
         }
 
+        if (barCount == 1) {
+            onDataRms(audioData, numberOfChannels, numberOfFrames)
+            return
+        }
+
         if (audioFormat.sampleRate != sampleRate || audioFormat.bitsPerSample != bitsPerSample || audioFormat.numberOfChannels != numberOfChannels) {
             audioFormat = AudioFormat(bitsPerSample, sampleRate, numberOfChannels)
             ffiAudioAnalyzer.configure(audioFormat)
@@ -102,6 +107,33 @@ class LKVisualizer(
         } else {
             bands = amplitudes
         }
+
+        handler.post {
+            eventSink?.success(bands)
+        }
+    }
+
+    private fun onDataRms(
+        audioData: ByteBuffer,
+        numberOfChannels: Int,
+        numberOfFrames: Int
+    ) {
+        if (numberOfFrames == 0) return
+
+        var sumSquares = 0.0
+        var pos = audioData.position()
+        val step = numberOfChannels * 2
+        val limit = audioData.limit()
+
+        while (pos < limit) {
+            val sample = audioData.getShort(pos).toDouble() / Short.MAX_VALUE
+            sumSquares += sample * sample
+            pos += step
+        }
+
+        val rms = sqrt(sumSquares / numberOfFrames).toFloat()
+        val normalized = ((rms.coerceIn(RMS_FLOOR, RMS_CEILING) - RMS_FLOOR) / (RMS_CEILING - RMS_FLOOR))
+        bands[0] = if (smoothTransition) smoothTransition(bands[0], normalized, 0.3f) else normalized
 
         handler.post {
             eventSink?.success(bands)
@@ -162,6 +194,13 @@ private fun easeInOutCubic(t: Float): Float {
         1 - (2 * t - 2).pow(3) / 2
     }
 }
+
+// RMS normalization bounds for speech audio after WebRTC AGC.
+// Floor: noise floor — RMS below this maps to 0 (silence).
+// Ceiling: loud speech — RMS above this saturates to 1.
+// Tune ceiling by logging raw RMS during a real session and setting to ~90th percentile.
+private const val RMS_FLOOR = 0.01f
+private const val RMS_CEILING = 0.40f
 
 private const val MIN_CONST = 0.1f
 private const val MAX_CONST = 8.0f

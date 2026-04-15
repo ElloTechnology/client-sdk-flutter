@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import Accelerate
 import AVFoundation
 import WebRTC
 
@@ -44,6 +45,13 @@ public class Visualizer: NSObject, RTCAudioRenderer, FlutterStreamHandler {
     public let smoothingFactor: Float
     public let smoothTransition: Bool
     public var bands: [Float]
+
+    // RMS normalization bounds for speech audio after WebRTC AGC.
+    // Floor: noise floor — RMS below this maps to 0 (silence).
+    // Ceiling: loud speech — RMS above this saturates to 1.
+    // Tune ceiling by logging raw RMS during a real session and setting to ~90th percentile.
+    private static let rmsFloor: Float = 0.01
+    private static let rmsCeiling: Float = 0.40
 
     private let _processor: AudioVisualizeProcessor
     private weak var _track: AudioTrack?
@@ -79,6 +87,11 @@ public class Visualizer: NSObject, RTCAudioRenderer, FlutterStreamHandler {
     }
 
     public func render(pcmBuffer: AVAudioPCMBuffer) {
+        if bands.count == 1 {
+            renderRms(pcmBuffer: pcmBuffer)
+            return
+        }
+
         let newBands = _processor.process(pcmBuffer: pcmBuffer)
         guard var newBands else { return }
 
@@ -97,6 +110,22 @@ public class Visualizer: NSObject, RTCAudioRenderer, FlutterStreamHandler {
                 }
                 return new
             }
+            eventSink?(bands)
+        }
+    }
+
+    private func renderRms(pcmBuffer: AVAudioPCMBuffer) {
+        guard let pcmBuffer = pcmBuffer.convert(toCommonFormat: .pcmFormatFloat32),
+              let floatData = pcmBuffer.floatChannelData,
+              pcmBuffer.frameLength > 0 else { return }
+
+        var rms: Float = 0
+        vDSP_rmsqv(floatData[0], 1, &rms, vDSP_Length(pcmBuffer.frameLength))
+        let normalized = (min(max(rms, Self.rmsFloor), Self.rmsCeiling) - Self.rmsFloor) / (Self.rmsCeiling - Self.rmsFloor)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            bands[0] = smoothTransition ? _smoothTransition(from: bands[0], to: normalized, factor: smoothingFactor) : normalized
             eventSink?(bands)
         }
     }
