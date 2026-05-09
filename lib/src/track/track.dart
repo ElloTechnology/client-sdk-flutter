@@ -170,6 +170,23 @@ abstract class Track extends DisposableChangeNotifier with EventsEmittable<Track
 
   Timer? _monitorTimer;
 
+  /// Master switch for [startMonitor]'s per-track stats poll.
+  ///
+  /// When `false`, [startMonitor] is a no-op so the `Timer.periodic` that
+  /// drives [monitorStats] (and thus `RTCRtpSender/Receiver.getStats`) never
+  /// starts. Default `true` preserves upstream behavior.
+  ///
+  /// Apps that don't consume per-track stats (i.e. don't listen to
+  /// `AudioSenderStatsEvent` / `VideoSenderStatsEvent` /
+  /// `AudioReceiverStatsEvent` / `VideoReceiverStatsEvent`, and don't read
+  /// `currentBitrate`) can set this to `false` to avoid platform-channel
+  /// pressure on low-power devices.
+  ///
+  /// Set this once at startup before any [Track]s are constructed. Flipping
+  /// at runtime will not stop already-running monitor timers; for that, call
+  /// [stopMonitor] on each active track.
+  static bool statsMonitorEnabled = true;
+
   @internal
   Future<bool> monitorStats();
 
@@ -181,6 +198,9 @@ abstract class Track extends DisposableChangeNotifier with EventsEmittable<Track
 
   @internal
   void startMonitor() {
+    if (!Track.statsMonitorEnabled) {
+      return;
+    }
     _monitorTimer ??= Timer.periodic(const Duration(milliseconds: monitorFrequency), (_) async {
       if (!await monitorStats()) {
         stopMonitor();
@@ -193,6 +213,12 @@ abstract class Track extends DisposableChangeNotifier with EventsEmittable<Track
     _monitorTimer?.cancel();
     _monitorTimer = null;
   }
+
+  /// Visible for testing: whether the per-track stats `Timer.periodic` is
+  /// currently scheduled. Returns `true` only if [startMonitor] succeeded in
+  /// scheduling a timer (i.e. [statsMonitorEnabled] was `true` at the time).
+  @visibleForTesting
+  bool get hasActiveStatsMonitor => _monitorTimer != null;
 
   @internal
   void updateMuted(
