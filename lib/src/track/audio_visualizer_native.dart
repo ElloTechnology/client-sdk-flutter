@@ -36,6 +36,7 @@ class AudioVisualizerNative extends AudioVisualizer {
       barCount: visualizerOptions.barCount,
       visualizerId: visualizerId,
       smoothTransition: visualizerOptions.smoothTransition,
+      sampleIntervalMs: visualizerOptions.sampleIntervalMs,
     );
 
     _eventChannel = EventChannel('io.livekit.audio.visualizer/eventChannel-${mediaStreamTrack.id}-$visualizerId');

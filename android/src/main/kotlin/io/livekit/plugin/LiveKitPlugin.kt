@@ -69,6 +69,10 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
     val barCount = call.argument<Int>("barCount") ?: 7
     val isCentered = call.argument<Boolean>("isCentered") ?: true
     var smoothTransition = call.argument<Boolean>("smoothTransition") ?: true
+    // 0 = process every audio frame (default, preserves existing behavior).
+    // > 0 = minimum ms between processed frames; earlier frames are dropped
+    // before FFT runs. Used on low-power devices to reduce native CPU.
+    val sampleIntervalMs = call.argument<Int>("sampleIntervalMs") ?: 0
 
     val processors = getAudioProcessors(trackId)
     if (processors == null) {
@@ -86,6 +90,7 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       barCount = barCount,
       isCentered = isCentered,
       smoothTransition = smoothTransition,
+      sampleIntervalMs = sampleIntervalMs,
       audioTrack = processors.track,
       binaryMessenger = binaryMessenger!!,
       visualizerId = visualizerId
@@ -103,11 +108,13 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       return
     }
 
-    // Find and remove visualizer from all processors
-    for (processors in audioProcessors.values) {
+    for ((trackId, processors) in audioProcessors) {
       processors.visualizers[visualizerId]?.let { visualizer ->
         visualizer.stop()
         processors.visualizers.remove(visualizerId)
+      }
+      if (processors.visualizers.isEmpty() && processors.renderers.isEmpty()) {
+        audioProcessors.remove(trackId)
       }
     }
 
@@ -208,11 +215,13 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       return
     }
 
-    // Find and remove renderer from all processors
-    for (processors in audioProcessors.values) {
+    for ((trackId, processors) in audioProcessors) {
       processors.renderers[rendererId]?.let { renderer ->
         renderer.detach()
         processors.renderers.remove(rendererId)
+      }
+      if (processors.visualizers.isEmpty() && processors.renderers.isEmpty()) {
+        audioProcessors.remove(trackId)
       }
     }
 
