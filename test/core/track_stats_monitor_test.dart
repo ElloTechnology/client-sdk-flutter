@@ -46,15 +46,24 @@ class _FakeTrack extends Track {
 void main() {
   group('Track.statsMonitorEnabled', () {
     tearDown(() {
-      // Restore upstream default so subsequent tests are unaffected.
-      Track.statsMonitorEnabled = true;
+      // Restore fork default so subsequent tests are unaffected.
+      Track.statsMonitorEnabled = false;
     });
 
-    test('defaults to true (preserves upstream behavior)', () {
-      expect(Track.statsMonitorEnabled, isTrue);
+    test('defaults to false in this fork (diverges from upstream)', () {
+      expect(Track.statsMonitorEnabled, isFalse);
+    });
+
+    test('startMonitor is a no-op at the default', () {
+      final track = _FakeTrack();
+
+      track.startMonitor();
+
+      expect(track.hasActiveStatsMonitor, isFalse);
     });
 
     test('startMonitor schedules the timer when enabled', () {
+      Track.statsMonitorEnabled = true;
       final track = _FakeTrack();
       addTearDown(track.stopMonitor);
 
@@ -63,16 +72,8 @@ void main() {
       expect(track.hasActiveStatsMonitor, isTrue);
     });
 
-    test('startMonitor is a no-op when disabled', () {
-      Track.statsMonitorEnabled = false;
-      final track = _FakeTrack();
-
-      track.startMonitor();
-
-      expect(track.hasActiveStatsMonitor, isFalse);
-    });
-
     test('toggling at runtime does not stop already-running monitors', () {
+      Track.statsMonitorEnabled = true;
       final track = _FakeTrack();
       addTearDown(track.stopMonitor);
 

@@ -172,20 +172,22 @@ abstract class Track extends DisposableChangeNotifier with EventsEmittable<Track
 
   /// Master switch for [startMonitor]'s per-track stats poll.
   ///
-  /// When `false`, [startMonitor] is a no-op so the `Timer.periodic` that
-  /// drives [monitorStats] (and thus `RTCRtpSender/Receiver.getStats`) never
-  /// starts. Default `true` preserves upstream behavior.
-  ///
-  /// Apps that don't consume per-track stats (i.e. don't listen to
+  /// When `false` (the default in this fork), [startMonitor] is a no-op so
+  /// the `Timer.periodic` that drives [monitorStats] (and thus
+  /// `RTCRtpSender/Receiver.getStats`) never starts. This diverges from
+  /// upstream livekit/client-sdk-flutter, which polls unconditionally; the
+  /// fork defaults to off because most consumers do not read
   /// `AudioSenderStatsEvent` / `VideoSenderStatsEvent` /
-  /// `AudioReceiverStatsEvent` / `VideoReceiverStatsEvent`, and don't read
-  /// `currentBitrate`) can set this to `false` to avoid platform-channel
-  /// pressure on low-power devices.
+  /// `AudioReceiverStatsEvent` / `VideoReceiverStatsEvent` or
+  /// `currentBitrate`, and the per-track platform-channel cost is high on
+  /// low-power devices.
   ///
-  /// Set this once at startup before any [Track]s are constructed. Flipping
-  /// at runtime will not stop already-running monitor timers; for that, call
-  /// [stopMonitor] on each active track.
-  static bool statsMonitorEnabled = true;
+  /// Set this to `true` once at startup if the host app *does* consume any
+  /// per-track stats. Must be set before any [Track]s are constructed —
+  /// flipping at runtime will not start the timer on already-existing tracks
+  /// (and will not stop already-running monitor timers either; call
+  /// [stopMonitor] on each active track for that).
+  static bool statsMonitorEnabled = false;
 
   @internal
   Future<bool> monitorStats();
