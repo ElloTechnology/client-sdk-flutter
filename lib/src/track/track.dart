@@ -170,6 +170,25 @@ abstract class Track extends DisposableChangeNotifier with EventsEmittable<Track
 
   Timer? _monitorTimer;
 
+  /// Master switch for [startMonitor]'s per-track stats poll.
+  ///
+  /// When `false` (the default in this fork), [startMonitor] is a no-op so
+  /// the `Timer.periodic` that drives [monitorStats] (and thus
+  /// `RTCRtpSender/Receiver.getStats`) never starts. This diverges from
+  /// upstream livekit/client-sdk-flutter, which polls unconditionally; the
+  /// fork defaults to off because most consumers do not read
+  /// `AudioSenderStatsEvent` / `VideoSenderStatsEvent` /
+  /// `AudioReceiverStatsEvent` / `VideoReceiverStatsEvent` or
+  /// `currentBitrate`, and the per-track platform-channel cost is high on
+  /// low-power devices.
+  ///
+  /// Set this to `true` once at startup if the host app *does* consume any
+  /// per-track stats. Must be set before any [Track]s are constructed —
+  /// flipping at runtime will not start the timer on already-existing tracks
+  /// (and will not stop already-running monitor timers either; call
+  /// [stopMonitor] on each active track for that).
+  static bool statsMonitorEnabled = false;
+
   @internal
   Future<bool> monitorStats();
 
@@ -181,6 +200,9 @@ abstract class Track extends DisposableChangeNotifier with EventsEmittable<Track
 
   @internal
   void startMonitor() {
+    if (!Track.statsMonitorEnabled) {
+      return;
+    }
     _monitorTimer ??= Timer.periodic(const Duration(milliseconds: monitorFrequency), (_) async {
       if (!await monitorStats()) {
         stopMonitor();
@@ -193,6 +215,12 @@ abstract class Track extends DisposableChangeNotifier with EventsEmittable<Track
     _monitorTimer?.cancel();
     _monitorTimer = null;
   }
+
+  /// Visible for testing: whether the per-track stats `Timer.periodic` is
+  /// currently scheduled. Returns `true` only if [startMonitor] succeeded in
+  /// scheduling a timer (i.e. [statsMonitorEnabled] was `true` at the time).
+  @visibleForTesting
+  bool get hasActiveStatsMonitor => _monitorTimer != null;
 
   @internal
   void updateMuted(
