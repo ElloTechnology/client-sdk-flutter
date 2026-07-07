@@ -1195,6 +1195,7 @@ extension RPCMethods on LocalParticipant {
         if (!completer.isCompleted) {
           completer.completeError(RpcError.builtIn(RpcError.connectionTimeout));
         }
+        _pendingAcks.remove(requestId);
         _pendingResponses.remove(requestId);
       });
 
