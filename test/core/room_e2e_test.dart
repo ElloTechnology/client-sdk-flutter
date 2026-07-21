@@ -23,6 +23,8 @@ import 'package:logging/logging.dart';
 
 import 'package:livekit_client/livekit_client.dart';
 import 'package:livekit_client/src/internal/events.dart';
+import 'package:livekit_client/src/proto/livekit_models.pb.dart' as lk_models;
+import 'package:livekit_client/src/proto/livekit_rtc.pb.dart' as lk_rtc;
 import '../mock/e2e_container.dart';
 import '../mock/test_data.dart';
 import '../mock/websocket_mock.dart';
@@ -234,6 +236,57 @@ void main() {
 
       // Both calls completed (didn't hang or deadlock).
       expect(results.length, 2);
+    });
+
+    test('XP-2782: full reconnect does not republish a stopped muted microphone', () async {
+      final participant = room.localParticipant!;
+      final mediaStream = _FakeMediaStream('muted-microphone-stream');
+      final mediaTrack = _FakeMediaStreamTrack(
+        id: 'muted-microphone-track',
+        kind: 'audio',
+      );
+      await mediaStream.addTrack(mediaTrack);
+      final track = LocalAudioTrack(
+        TrackSource.microphone,
+        mediaStream,
+        mediaTrack,
+        const AudioCaptureOptions(),
+      );
+      final publication = LocalTrackPublication<LocalAudioTrack>(
+        participant: participant,
+        info: lk_models.TrackInfo(
+          sid: 'muted-microphone-publication',
+          type: lk_models.TrackType.AUDIO,
+          source: lk_models.TrackSource.MICROPHONE,
+        ),
+        track: track,
+      );
+      participant.addTrackPublication(publication);
+      await track.start();
+      final mutedEvent = room.events.waitFor<TrackMutedEvent>(
+        duration: const Duration(seconds: 1),
+      );
+      await publication.mute();
+      await mutedEvent;
+
+      // CRITICAL: A full reconnect must not pass the disposed native track to
+      // addTransceiver; the normal unmute path recreates capture when needed.
+      final republish = participant.rePublishAllTracks();
+      ws.onData(
+        lk_rtc.SignalResponse(
+          trackPublished: lk_rtc.TrackPublishedResponse(
+            cid: mediaTrack.id,
+            track: lk_models.TrackInfo(
+              sid: 'republished-microphone',
+              type: lk_models.TrackType.AUDIO,
+              source: lk_models.TrackSource.MICROPHONE,
+            ),
+          ),
+        ).writeToBuffer(),
+      );
+      await republish;
+
+      expect(participant.getTrackPublicationBySource(TrackSource.microphone), isNull);
     });
   });
 }

@@ -619,13 +619,19 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
   }
 
   Future<void> rePublishAllTracks() async {
-    final tracks = trackPublications.values.toList();
+    final publications = trackPublications.values.toList();
     trackPublications.clear();
-    for (LocalTrackPublication track in tracks) {
-      if (track.track is LocalAudioTrack) {
-        await publishAudioTrack(track.track as LocalAudioTrack);
-      } else if (track.track is LocalVideoTrack) {
-        await publishVideoTrack(track.track as LocalVideoTrack);
+    for (final publication in publications) {
+      final track = publication.track;
+      if (publication.muted || track?.muted == true) {
+        // stopOnMute disposes native capture while retaining the publication.
+        // Keep muted sources cold through reconnect; setSourceEnabled recreates
+        // and publishes capture when the source is enabled again.
+        await publication.dispose();
+      } else if (track is LocalAudioTrack) {
+        await publishAudioTrack(track);
+      } else if (track is LocalVideoTrack) {
+        await publishVideoTrack(track);
       }
     }
   }
