@@ -108,6 +108,15 @@ enum StreamState {
   active,
 }
 
+/// Why a [Room] disconnected.
+///
+/// The first eight values mirror server-sent protocol reasons; `disconnected`,
+/// `signalingConnectionFailure` and `reconnectAttemptsExceeded` are synthesized
+/// by this SDK and have no protocol counterpart. Values are appended rather than
+/// interleaved so that persisted or transmitted `index` values stay stable.
+///
+/// A protocol reason newer than this SDK's generated protobuf degrades to
+/// [unknown]; see `DisconnectReasonExt.toSDKType`.
 enum DisconnectReason {
   unknown,
   clientInitiated,
@@ -120,6 +129,15 @@ enum DisconnectReason {
   disconnected,
   signalingConnectionFailure,
   reconnectAttemptsExceeded,
+  migration,
+  signalClose,
+  roomClosed,
+  userUnavailable,
+  userRejected,
+  sipTrunkFailure,
+  connectionTimeout,
+  mediaFailure,
+  agentError,
 }
 
 /// The reason why a track failed to publish.

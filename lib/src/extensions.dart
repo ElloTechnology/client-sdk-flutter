@@ -236,17 +236,36 @@ extension EncryptionTypeExt on lk_models.Encryption_Type {
       }[this]!;
 }
 
+/// The single mapping from a protocol disconnect reason to its public
+/// counterpart. Tests assert this covers `lk_models.DisconnectReason.values`
+/// exactly, so a protocol reason added by codegen cannot slip through
+/// unclassified.
+const kProtocolToPublicDisconnectReason = <lk_models.DisconnectReason, DisconnectReason>{
+  lk_models.DisconnectReason.UNKNOWN_REASON: DisconnectReason.unknown,
+  lk_models.DisconnectReason.CLIENT_INITIATED: DisconnectReason.clientInitiated,
+  lk_models.DisconnectReason.DUPLICATE_IDENTITY: DisconnectReason.duplicateIdentity,
+  lk_models.DisconnectReason.SERVER_SHUTDOWN: DisconnectReason.serverShutdown,
+  lk_models.DisconnectReason.PARTICIPANT_REMOVED: DisconnectReason.participantRemoved,
+  lk_models.DisconnectReason.ROOM_DELETED: DisconnectReason.roomDeleted,
+  lk_models.DisconnectReason.STATE_MISMATCH: DisconnectReason.stateMismatch,
+  lk_models.DisconnectReason.JOIN_FAILURE: DisconnectReason.joinFailure,
+  lk_models.DisconnectReason.MIGRATION: DisconnectReason.migration,
+  lk_models.DisconnectReason.SIGNAL_CLOSE: DisconnectReason.signalClose,
+  lk_models.DisconnectReason.ROOM_CLOSED: DisconnectReason.roomClosed,
+  lk_models.DisconnectReason.USER_UNAVAILABLE: DisconnectReason.userUnavailable,
+  lk_models.DisconnectReason.USER_REJECTED: DisconnectReason.userRejected,
+  lk_models.DisconnectReason.SIP_TRUNK_FAILURE: DisconnectReason.sipTrunkFailure,
+  lk_models.DisconnectReason.CONNECTION_TIMEOUT: DisconnectReason.connectionTimeout,
+  lk_models.DisconnectReason.MEDIA_FAILURE: DisconnectReason.mediaFailure,
+  lk_models.DisconnectReason.AGENT_ERROR: DisconnectReason.agentError,
+};
+
 extension DisconnectReasonExt on lk_models.DisconnectReason {
-  DisconnectReason toSDKType() => {
-        lk_models.DisconnectReason.UNKNOWN_REASON: DisconnectReason.unknown,
-        lk_models.DisconnectReason.CLIENT_INITIATED: DisconnectReason.clientInitiated,
-        lk_models.DisconnectReason.DUPLICATE_IDENTITY: DisconnectReason.duplicateIdentity,
-        lk_models.DisconnectReason.SERVER_SHUTDOWN: DisconnectReason.serverShutdown,
-        lk_models.DisconnectReason.PARTICIPANT_REMOVED: DisconnectReason.participantRemoved,
-        lk_models.DisconnectReason.ROOM_DELETED: DisconnectReason.roomDeleted,
-        lk_models.DisconnectReason.STATE_MISMATCH: DisconnectReason.stateMismatch,
-        lk_models.DisconnectReason.JOIN_FAILURE: DisconnectReason.joinFailure,
-      }[this]!;
+  /// A server running a newer protocol than this SDK's generated protobuf can
+  /// send a reason with no local counterpart. Such a value degrades to
+  /// [DisconnectReason.unknown] rather than throwing, so an unrecognized reason
+  /// can never break disconnect-event delivery.
+  DisconnectReason toSDKType() => kProtocolToPublicDisconnectReason[this] ?? DisconnectReason.unknown;
 }
 
 extension ParticipantTypeExt on lk_models.ParticipantInfo_Kind {
