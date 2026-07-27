@@ -184,6 +184,46 @@ void main() {
       ws.onData(leaveResponse.writeToBuffer());
     });
 
+    // A terminal leave carries the reason the server chose; each one must reach
+    // the application with its own attribution rather than collapsing into a
+    // generic loss.
+    const terminalLeaveReasons = <lk_models.DisconnectReason, DisconnectReason>{
+      lk_models.DisconnectReason.MIGRATION: DisconnectReason.migration,
+      lk_models.DisconnectReason.SIGNAL_CLOSE: DisconnectReason.signalClose,
+      lk_models.DisconnectReason.ROOM_CLOSED: DisconnectReason.roomClosed,
+      lk_models.DisconnectReason.USER_UNAVAILABLE: DisconnectReason.userUnavailable,
+      lk_models.DisconnectReason.USER_REJECTED: DisconnectReason.userRejected,
+      lk_models.DisconnectReason.SIP_TRUNK_FAILURE: DisconnectReason.sipTrunkFailure,
+      lk_models.DisconnectReason.CONNECTION_TIMEOUT: DisconnectReason.connectionTimeout,
+      lk_models.DisconnectReason.MEDIA_FAILURE: DisconnectReason.mediaFailure,
+      lk_models.DisconnectReason.AGENT_ERROR: DisconnectReason.agentError,
+    };
+
+    for (final entry in terminalLeaveReasons.entries) {
+      test('leave with ${entry.key.name} disconnects with ${entry.value.name}', () async {
+        final disconnected = room.events.waitFor<RoomDisconnectedEvent>(duration: const Duration(seconds: 2));
+
+        ws.onData(lk_rtc.SignalResponse(
+          leave: lk_rtc.LeaveRequest(
+            reason: entry.key,
+            action: lk_rtc.LeaveRequest_Action.DISCONNECT,
+          ),
+        ).writeToBuffer());
+
+        expect((await disconnected).reason, entry.value);
+      });
+    }
+
+    test('leave with a reason newer than the generated protocol disconnects as unknown', () async {
+      final disconnected = room.events.waitFor<RoomDisconnectedEvent>(duration: const Duration(seconds: 2));
+
+      // field 8 (leave), length-delimited, wrapping field 2 (reason) carrying a
+      // value beyond anything this SDK's protobuf can name.
+      ws.onData(Uint8List.fromList([(8 << 3) | 2, 0x02, (2 << 3) | 0, 127]));
+
+      expect((await disconnected).reason, DisconnectReason.unknown);
+    });
+
     test('tracks arriving before participant metadata are handled once metadata arrives', () async {
       final fakeStream = _FakeMediaStream('${remoteParticipantData.sid}|remote_stream');
       final fakeTrack = _FakeMediaStreamTrack(

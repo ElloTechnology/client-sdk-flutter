@@ -187,6 +187,7 @@ const DisconnectReason$json = {
     {'1': 'SIP_TRUNK_FAILURE', '2': 13},
     {'1': 'CONNECTION_TIMEOUT', '2': 14},
     {'1': 'MEDIA_FAILURE', '2': 15},
+    {'1': 'AGENT_ERROR', '2': 16},
   ],
 };
 
@@ -198,7 +199,7 @@ final $typed_data.Uint8List disconnectReasonDescriptor =
         'AGEhAKDEpPSU5fRkFJTFVSRRAHEg0KCU1JR1JBVElPThAIEhAKDFNJR05BTF9DTE9TRRAJEg8K'
         'C1JPT01fQ0xPU0VEEAoSFAoQVVNFUl9VTkFWQUlMQUJMRRALEhEKDVVTRVJfUkVKRUNURUQQDB'
         'IVChFTSVBfVFJVTktfRkFJTFVSRRANEhYKEkNPTk5FQ1RJT05fVElNRU9VVBAOEhEKDU1FRElB'
-        'X0ZBSUxVUkUQDw==');
+        'X0ZBSUxVUkUQDxIPCgtBR0VOVF9FUlJPUhAQ');
 
 @$core.Deprecated('Use reconnectReasonDescriptor instead')
 const ReconnectReason$json = {
