@@ -16,9 +16,9 @@
 // LiveKit Exception [TimeoutException] Timeout` an SDK event handler raised
 // reached the host app's root zone as a crash. `listen` hands an async handler
 // to `Stream.listen`, which drops the future it returns, so nothing between the
-// throw and the zone could see it. Containment is opt-in: the SDK sets it on
-// the listeners it owns, and an application's own handlers keep reporting their
-// bugs to the application's zone.
+// throw and the zone could see it. Containment is predicate-based: SDK-owned
+// listeners contain the known transient timeout while application-handler and
+// SDK invariant failures keep reporting to the application's zone.
 
 @Timeout(Duration(seconds: 5))
 library;
@@ -71,7 +71,7 @@ void main() {
           final listener = EventsListener<Object>(
             emitter,
             synchronized: synchronized,
-            containErrors: true,
+            containError: (error) => error is lk.TimeoutException,
           );
           addTearDown(listener.dispose);
 
@@ -103,7 +103,7 @@ void main() {
           final listener = EventsListener<Object>(
             emitter,
             synchronized: synchronized,
-            containErrors: true,
+            containError: (error) => error is lk.TimeoutException,
           );
           addTearDown(listener.dispose);
 
@@ -156,6 +156,37 @@ void main() {
       expect(severeTimeouts(), isEmpty);
     });
 
+    test('a non-transient error still reports to the host zone', () async {
+      final handled = Completer<void>();
+      final zoneErrors = <Object>[];
+
+      await runZonedGuarded(() async {
+        final emitter = EventsEmitter<Object>();
+        addTearDown(emitter.dispose);
+        final listener = EventsListener<Object>(
+          emitter,
+          containError: (error) => error is lk.TimeoutException,
+        );
+        addTearDown(listener.dispose);
+
+        listener.on<_TestEvent>((event) async {
+          try {
+            throw StateError('broken SDK invariant');
+          } finally {
+            handled.complete();
+          }
+        });
+
+        emitter.emit(const _TestEvent('first'));
+        await handled.future;
+        await pumpEventQueue();
+      }, (error, _) => zoneErrors.add(error));
+
+      expect(zoneErrors, hasLength(1));
+      expect(zoneErrors.single, isA<StateError>());
+      expect(severeTimeouts(), isEmpty);
+    });
+
     test('a contained synchronized listener keeps ordering after a handler throws', () async {
       // The engine's signal listener is synchronized, so a handler that throws
       // while holding the lock must still release it — otherwise one failed
@@ -167,7 +198,11 @@ void main() {
       await runZonedGuarded(() async {
         final emitter = EventsEmitter<Object>();
         addTearDown(emitter.dispose);
-        final listener = EventsListener<Object>(emitter, synchronized: true, containErrors: true);
+        final listener = EventsListener<Object>(
+          emitter,
+          synchronized: true,
+          containError: (error) => error is lk.TimeoutException,
+        );
         addTearDown(listener.dispose);
 
         listener.on<_TestEvent>((event) async {

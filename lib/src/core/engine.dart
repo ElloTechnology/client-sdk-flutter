@@ -119,10 +119,13 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
   // server-provided ice servers
   List<RTCIceServer> _serverProvidedIceServers = [];
 
-  // Contained: an error escaping one of the engine's own signal handlers has
-  // no caller to reach and would surface in the hosting application's zone.
-  late EventsListener<SignalEvent> _signalListener =
-      signalClient.createListener(synchronized: true, containErrors: true);
+  // Expected transient handler timeouts have no awaiting caller and are
+  // reported at the detached event boundary. Other failures reach the host
+  // zone so SDK invariants remain visible.
+  late EventsListener<SignalEvent> _signalListener = signalClient.createListener(
+    synchronized: true,
+    containError: isTransientEventHandlerError,
+  );
 
   int _reconnectAttempts = 0;
   Timer? _reconnectTimeout;
@@ -1244,7 +1247,10 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
 
       await _signalListener.cancelAll();
 
-      _signalListener = signalClient.createListener(synchronized: true, containErrors: true);
+      _signalListener = signalClient.createListener(
+        synchronized: true,
+        containError: isTransientEventHandlerError,
+      );
       _setUpSignalListeners();
 
       await connect(

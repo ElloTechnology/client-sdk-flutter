@@ -26,10 +26,21 @@ import '../logger.dart';
 import '../support/disposable.dart';
 import '../types/other.dart';
 
+typedef EventErrorPredicate = bool Function(Object error);
+
+bool isTransientEventHandlerError(Object error) => error is TimeoutException;
+
 mixin EventsEmittable<T> {
   final events = EventsEmitter<T>();
-  EventsListener<T> createListener({bool synchronized = false, bool containErrors = false}) =>
-      EventsListener<T>(events, synchronized: synchronized, containErrors: containErrors);
+  EventsListener<T> createListener({
+    bool synchronized = false,
+    EventErrorPredicate? containError,
+  }) =>
+      EventsListener<T>(
+        events,
+        synchronized: synchronized,
+        containError: containError,
+      );
 }
 
 // Type-safe, multi-listenable, dispose safe event handling
@@ -104,10 +115,10 @@ class EventsListener<T> extends EventsListenable<T> {
   EventsListener(
     this.emitter, {
     bool synchronized = false,
-    bool containErrors = false,
+    EventErrorPredicate? containError,
   }) : super(
           synchronized: synchronized,
-          containErrors: containErrors,
+          containError: containError,
         );
 }
 
@@ -118,16 +129,15 @@ abstract class EventsListenable<T> extends Disposable {
 
   final bool synchronized;
 
-  /// Whether an error escaping a handler is reported here instead of raised.
+  /// Selects errors that are reported here instead of raised.
   ///
   /// `Stream.listen` discards whatever a handler returns, so an error escaping
   /// an async handler is delivered to the zone that created the subscription —
-  /// for an application embedding this SDK, its root zone, where an SDK failure
-  /// is indistinguishable from an application crash. Listeners the SDK owns set
-  /// this: their events are already dispatched and no caller is waiting, so
-  /// there is nothing for the error to propagate to. It stays off by default so
-  /// that an application's own handlers keep reporting their bugs to its zone.
-  final bool containErrors;
+  /// for an application embedding this SDK, its root zone. SDK-owned listeners
+  /// use a narrow predicate for expected transient failures. All other errors,
+  /// including application-handler and SDK invariant failures, keep reporting
+  /// to the host zone.
+  final EventErrorPredicate? containError;
 
   // keep track of listeners to cancel later
   final _listeners = <StreamSubscription<T>>[];
@@ -137,7 +147,7 @@ abstract class EventsListenable<T> extends Disposable {
 
   EventsListenable({
     required this.synchronized,
-    this.containErrors = false,
+    this.containError,
   }) {
     onDispose(() async {
       await cancelAll();
@@ -159,13 +169,17 @@ abstract class EventsListenable<T> extends Disposable {
   // listens to all events, guaranteed to be cancelled on dispose
   CancelListenFunc listen(FutureOr<void> Function(T) onEvent) {
     FutureOr<void> Function(T) func = onEvent;
-    if (containErrors) {
+    if (containError != null) {
       final handler = func;
       func = (event) async {
         try {
           await handler(event);
         } catch (error, stackTrace) {
-          logger.severe('${objectId} listener for ${event.runtimeType} failed', error, stackTrace);
+          if (containError!(error)) {
+            logger.severe('${objectId} listener for ${event.runtimeType} failed', error, stackTrace);
+            return;
+          }
+          Error.throwWithStackTrace(error, stackTrace);
         }
       };
     }

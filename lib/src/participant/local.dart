@@ -1111,18 +1111,10 @@ extension RPCMethods on LocalParticipant {
     num responseTimeoutMs,
     num version,
   ) async {
-    try {
-      await publishRpcAck(
-        destinationIdentity: callerIdentity,
-        requestId: requestId,
-      );
-    } catch (error, stackTrace) {
-      // The ack only cancels the caller's round-trip timer; the response is
-      // what the caller is waiting for. Abandoning the request because the ack
-      // could not be sent leaves the caller with no answer at all, so run the
-      // handler and still attempt a response.
-      logger.warning('Failed to ack RPC request ${requestId} for ${method}', error, stackTrace);
-    }
+    await publishRpcAck(
+      destinationIdentity: callerIdentity,
+      requestId: requestId,
+    );
 
     RpcError? responseError;
     String? responsePayload;
@@ -1169,20 +1161,14 @@ extension RPCMethods on LocalParticipant {
       }
     }
 
-    try {
-      await publishRpcResponse(
-        destinationIdentity: callerIdentity,
-        requestId: requestId,
-        payload: responsePayload,
-        error: responseError?.toProto(),
-      );
-      logger.fine('RPC request ${method} handled');
-    } catch (error, stackTrace) {
-      // Nothing is waiting on this call — it is driven by an incoming signal
-      // event — and the caller has its own response timeout, so report the
-      // undeliverable response rather than raising past the handler.
-      logger.warning('Failed to respond to RPC request ${requestId} for ${method}', error, stackTrace);
-    }
+    await publishRpcResponse(
+      destinationIdentity: callerIdentity,
+      requestId: requestId,
+      payload: responsePayload,
+      error: responseError?.toProto(),
+    );
+
+    logger.fine('RPC request ${method} handled');
   }
 
   /// Initiate an RPC call to a remote participant.
