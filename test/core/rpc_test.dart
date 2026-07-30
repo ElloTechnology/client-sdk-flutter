@@ -234,26 +234,46 @@ void main() {
   });
 
   group('RpcError.toString', () {
-    test('carries code and message', () {
+    test('carries code and message when data is null', () {
       final error = RpcError.builtIn(RpcError.connectionTimeout);
 
-      final described = error.toString();
-
-      expect(described, contains('1501'));
-      expect(described, contains('Connection timeout'));
-      expect(described, isNot(contains('Instance of')));
+      expect(
+        error.toString(),
+        'RpcError(code: 1501, message: Connection timeout)',
+      );
     });
 
-    test('carries data when set', () {
-      final error = RpcError.builtIn(RpcError.applicationError, data: 'status=3004');
+    test('omits an empty data payload carried over from the proto', () {
+      // fromProto stores an absent payload as '' rather than null.
+      final error = RpcError.fromProto(RpcError.builtIn(RpcError.sendFailed).toProto());
 
-      expect(error.toString(), contains('status=3004'));
+      expect(
+        error.toString(),
+        'RpcError(code: 1505, message: Failed to send)',
+      );
     });
 
-    test('omits data when absent', () {
-      final error = RpcError(code: RpcError.sendFailed, message: 'Failed to send');
+    test('reports only the length of a populated data payload', () {
+      // The payload is remote-supplied and may carry user content, so it must
+      // not reach a log or crash reporter verbatim.
+      final error = RpcError.builtIn(
+        RpcError.applicationError,
+        data: '{"learner":"Ada","utterance":"my name is Ada"}',
+      );
 
-      expect(error.toString(), isNot(contains('data')));
+      expect(
+        error.toString(),
+        'RpcError(code: 1500, message: Application error in method handler, data: 46 chars)',
+      );
+    });
+
+    test('truncates a long message', () {
+      final error = RpcError(code: RpcError.applicationError, message: 'x' * 250);
+
+      expect(
+        error.toString(),
+        'RpcError(code: 1500, message: ${'x' * 200}...)',
+      );
     });
   });
 }

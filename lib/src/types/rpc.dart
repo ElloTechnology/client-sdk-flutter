@@ -117,14 +117,28 @@ class RpcError implements Exception {
     );
   }
 
-  /// Carries the code, message and data so an error that escapes to a crash
-  /// reporter or log is identifiable — the default `Instance of 'RpcError'`
-  /// discards everything that says which call failed and why.
+  /// Longest [message] rendered by [toString]. The message is composed by the
+  /// remote side, so it is bounded before it reaches a log or crash reporter.
+  static const maxDescribedMessageLength = 200;
+
+  /// Carries the code and message so an error that escapes to a crash reporter
+  /// or log is identifiable — the default `Instance of 'RpcError'` discards
+  /// everything that says which call failed and why.
+  ///
+  /// [data] is an opaque payload chosen by the remote side and may carry user
+  /// content, so only its length is reported. Anything that needs the payload
+  /// itself should read [data] directly and decide what is safe to record.
   @override
   String toString() {
-    final buffer = StringBuffer('RpcError(code: $code, message: $message');
-    if (data != null) {
-      buffer.write(', data: $data');
+    final buffer = StringBuffer('RpcError(code: $code, message: ');
+    if (message.length > maxDescribedMessageLength) {
+      buffer.write('${message.substring(0, maxDescribedMessageLength)}...');
+    } else {
+      buffer.write(message);
+    }
+    // fromProto stores an absent payload as '', so length is the test, not null.
+    if (data != null && data!.isNotEmpty) {
+      buffer.write(', data: ${data!.length} chars');
     }
     buffer.write(')');
 
