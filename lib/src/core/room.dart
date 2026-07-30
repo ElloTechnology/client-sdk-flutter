@@ -741,17 +741,31 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   }
 
   Future<void> _onParticipantUpdateEvent(List<lk_models.ParticipantInfo> updates) async {
-    // trigger change notifier only if list of participants membership is changed
-    var hasChanged = false;
-    for (final info in updates) {
-      // The local participant is not ready yet, waiting for the
-      // `RoomConnectedEvent` to create the local participant.
-      if (_localParticipant == null) {
+    // The local participant is created when the room reaches connected, so an
+    // update that arrives first waits for it. Once the room is disconnected
+    // that event can never arrive — the local participant was disposed with the
+    // rest of the session — and a signal update that lands in the teardown
+    // window would otherwise wait out the full duration and then raise.
+    if (_localParticipant == null) {
+      if (isDisposed || connectionState == ConnectionState.disconnected) {
+        logger.fine('Ignoring ${updates.length} participant update(s) on a disconnected room');
+        return;
+      }
+      try {
         await events.waitFor<RoomConnectedEvent>(
           duration: const Duration(seconds: 10),
         );
+      } on TimeoutException {
+        // Without a local participant its own info would be taken for a remote
+        // participant's, so the batch is dropped rather than misapplied.
+        logger.warning('Dropping ${updates.length} participant update(s): no local participant');
+        return;
       }
+    }
 
+    // trigger change notifier only if list of participants membership is changed
+    var hasChanged = false;
+    for (final info in updates) {
       if (localParticipant?.identity == info.identity) {
         await localParticipant?.updateFromInfo(info);
         continue;
