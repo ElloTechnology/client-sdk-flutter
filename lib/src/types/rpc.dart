@@ -117,24 +117,19 @@ class RpcError implements Exception {
     );
   }
 
-  /// Longest [message] rendered by [toString]. The message is composed by the
-  /// remote side, so it is bounded before it reaches a log or crash reporter.
-  static const maxDescribedMessageLength = 200;
-
-  /// Carries the code and message so an error that escapes to a crash reporter
-  /// or log is identifiable — the default `Instance of 'RpcError'` discards
-  /// everything that says which call failed and why.
+  /// Carries the code and its locally defined built-in message so an error that
+  /// escapes to a crash reporter or log is identifiable.
   ///
-  /// [data] is an opaque payload chosen by the remote side and may carry user
-  /// content, so only its length is reported. Anything that needs the payload
-  /// itself should read [data] directly and decide what is safe to record.
+  /// The instance [message] and [data] are chosen by the remote side and may
+  /// carry user content. The remote message is never rendered, and only the
+  /// data length is reported. Anything that needs either value should read it
+  /// directly and decide what is safe to record.
   @override
   String toString() {
-    final buffer = StringBuffer('RpcError(code: $code, message: ');
-    if (message.length > maxDescribedMessageLength) {
-      buffer.write('${message.substring(0, maxDescribedMessageLength)}...');
-    } else {
-      buffer.write(message);
+    final buffer = StringBuffer('RpcError(code: $code');
+    final builtInMessage = errorMessages[code];
+    if (builtInMessage != null) {
+      buffer.write(', message: $builtInMessage');
     }
     // fromProto stores an absent payload as '', so length is the test, not null.
     if (data != null && data!.isNotEmpty) {

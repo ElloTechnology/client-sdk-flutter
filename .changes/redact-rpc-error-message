@@ -1,0 +1,1 @@
+patch type="fixed" "Keep remote RPC error messages out of logs and crash reports"

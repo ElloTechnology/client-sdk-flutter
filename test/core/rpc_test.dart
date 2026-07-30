@@ -234,13 +234,34 @@ void main() {
   });
 
   group('RpcError.toString', () {
-    test('carries code and message when data is null', () {
+    test('uses the local built-in message when data is null', () {
       final error = RpcError.builtIn(RpcError.connectionTimeout);
 
       expect(
         error.toString(),
         'RpcError(code: 1501, message: Connection timeout)',
       );
+    });
+
+    test('does not render a remote message for a built-in code', () {
+      final error = RpcError(
+        code: RpcError.applicationError,
+        message: 'Learner Ada said a private thing',
+      );
+
+      expect(
+        error.toString(),
+        'RpcError(code: 1500, message: Application error in method handler)',
+      );
+    });
+
+    test('does not render a remote message for an unknown code', () {
+      final error = RpcError(
+        code: 1999,
+        message: 'secret supplied by the remote participant',
+      );
+
+      expect(error.toString(), 'RpcError(code: 1999)');
     });
 
     test('omits an empty data payload carried over from the proto', () {
@@ -264,15 +285,6 @@ void main() {
       expect(
         error.toString(),
         'RpcError(code: 1500, message: Application error in method handler, data: 46 chars)',
-      );
-    });
-
-    test('truncates a long message', () {
-      final error = RpcError(code: RpcError.applicationError, message: 'x' * 250);
-
-      expect(
-        error.toString(),
-        'RpcError(code: 1500, message: ${'x' * 200}...)',
       );
     });
   });
