@@ -74,6 +74,11 @@ class Transport extends Disposable {
       _cancelDebounce?.call();
       _cancelDebounce = null;
 
+      // A negotiation already in flight must not report into whatever replaced
+      // this transport.
+      onOffer = null;
+      onNegotiationFailed = null;
+
       // Ensure callbacks won't fire any more
       pc.onRenegotiationNeeded = null;
       pc.onIceCandidate = null;
@@ -123,6 +128,13 @@ class Transport extends Disposable {
     try {
       await createAndSendOffer();
     } catch (error, stackTrace) {
+      // A call already issued to the native layer rejects rather than returning
+      // when disposal frees the connection underneath it. That is teardown, not a
+      // negotiation failure, and must not drive recovery for a dead transport.
+      if (isDisposed) {
+        logger.warning('[$objectId] negotiation aborted by disposal: $error');
+        return;
+      }
       logger.warning('[$objectId] negotiation failed with error: $error', error, stackTrace);
       onNegotiationFailed?.call(error, stackTrace);
     }
@@ -251,6 +263,9 @@ class Transport extends Disposable {
     } catch (e) {
       throw NegotiationError(e.toString());
     }
+    // Disposal can abort setMungedSDP before the description is applied, and an
+    // offer the local peer never adopted must not be published.
+    if (_disposedMidNegotiation) return;
     onOffer?.call(offer);
   }
 

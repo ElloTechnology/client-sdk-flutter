@@ -364,10 +364,16 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
     if (error is NegotiationError) {
       fullReconnectOnNext = true;
     }
-    await handleReconnect(
-      ClientDisconnectReason.negotiationFailed,
-      reconnectReason: lk_models.ReconnectReason.RR_UNKNOWN,
-    );
+    try {
+      await handleReconnect(
+        ClientDisconnectReason.negotiationFailed,
+        reconnectReason: lk_models.ReconnectReason.RR_UNKNOWN,
+      );
+    } catch (e, stackTrace) {
+      // Nothing is awaiting this recovery, so a failure here would otherwise be
+      // lost as an unhandled async error.
+      logger.warning('recovery from negotiation failure failed with error: $e', e, stackTrace);
+    }
   }
 
   bool? isBufferStatusLow(Reliability kind) {
