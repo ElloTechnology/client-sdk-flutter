@@ -116,6 +116,20 @@ class RpcError implements Exception {
       data: data,
     );
   }
+
+  /// Carries the code, message and data so an error that escapes to a crash
+  /// reporter or log is identifiable — the default `Instance of 'RpcError'`
+  /// discards everything that says which call failed and why.
+  @override
+  String toString() {
+    final buffer = StringBuffer('RpcError(code: $code, message: $message');
+    if (data != null) {
+      buffer.write(', data: $data');
+    }
+    buffer.write(')');
+
+    return buffer.toString();
+  }
 }
 
 /// Maximum payload size for RPC requests and responses. If a payload exceeds this size,

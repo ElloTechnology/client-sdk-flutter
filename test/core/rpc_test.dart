@@ -232,4 +232,28 @@ void main() {
       );
     });
   });
+
+  group('RpcError.toString', () {
+    test('carries code and message', () {
+      final error = RpcError.builtIn(RpcError.connectionTimeout);
+
+      final described = error.toString();
+
+      expect(described, contains('1501'));
+      expect(described, contains('Connection timeout'));
+      expect(described, isNot(contains('Instance of')));
+    });
+
+    test('carries data when set', () {
+      final error = RpcError.builtIn(RpcError.applicationError, data: 'status=3004');
+
+      expect(error.toString(), contains('status=3004'));
+    });
+
+    test('omits data when absent', () {
+      final error = RpcError(code: RpcError.sendFailed, message: 'Failed to send');
+
+      expect(error.toString(), isNot(contains('data')));
+    });
+  });
 }
