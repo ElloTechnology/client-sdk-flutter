@@ -187,10 +187,14 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
               roomOptions: roomOptions,
             ) {
     //
-    _engineListener = this.engine.createListener();
+    // Contained: these carry the SDK's own engine and signal handling — the RPC
+    // dispatch and the participant updates among them. Their handlers run with
+    // no caller waiting, so an error escaping one would surface in the hosting
+    // application's zone as an application crash.
+    _engineListener = this.engine.createListener(containErrors: true);
     _setUpEngineListeners();
 
-    _signalListener = this.engine.signalClient.createListener();
+    _signalListener = this.engine.signalClient.createListener(containErrors: true);
     _setUpSignalListeners();
 
     _pendingTrackQueue = PendingTrackQueue(

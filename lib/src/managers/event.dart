@@ -28,8 +28,8 @@ import '../types/other.dart';
 
 mixin EventsEmittable<T> {
   final events = EventsEmitter<T>();
-  EventsListener<T> createListener({bool synchronized = false}) =>
-      EventsListener<T>(events, synchronized: synchronized);
+  EventsListener<T> createListener({bool synchronized = false, bool containErrors = false}) =>
+      EventsListener<T>(events, synchronized: synchronized, containErrors: containErrors);
 }
 
 // Type-safe, multi-listenable, dispose safe event handling
@@ -104,8 +104,10 @@ class EventsListener<T> extends EventsListenable<T> {
   EventsListener(
     this.emitter, {
     bool synchronized = false,
+    bool containErrors = false,
   }) : super(
           synchronized: synchronized,
+          containErrors: containErrors,
         );
 }
 
@@ -115,6 +117,18 @@ abstract class EventsListenable<T> extends Disposable {
   EventsEmitter<T> get emitter;
 
   final bool synchronized;
+
+  /// Whether an error escaping a handler is reported here instead of raised.
+  ///
+  /// `Stream.listen` discards whatever a handler returns, so an error escaping
+  /// an async handler is delivered to the zone that created the subscription —
+  /// for an application embedding this SDK, its root zone, where an SDK failure
+  /// is indistinguishable from an application crash. Listeners the SDK owns set
+  /// this: their events are already dispatched and no caller is waiting, so
+  /// there is nothing for the error to propagate to. It stays off by default so
+  /// that an application's own handlers keep reporting their bugs to its zone.
+  final bool containErrors;
+
   // keep track of listeners to cancel later
   final _listeners = <StreamSubscription<T>>[];
   final _syncLock = sync.Lock();
@@ -123,6 +137,7 @@ abstract class EventsListenable<T> extends Disposable {
 
   EventsListenable({
     required this.synchronized,
+    this.containErrors = false,
   }) {
     onDispose(() async {
       await cancelAll();
@@ -143,25 +158,24 @@ abstract class EventsListenable<T> extends Disposable {
 
   // listens to all events, guaranteed to be cancelled on dispose
   CancelListenFunc listen(FutureOr<void> Function(T) onEvent) {
-    // `Stream.listen` discards whatever the handler returns, so an error
-    // escaping an async handler is delivered to the root zone as an uncaught
-    // application error instead of an SDK one. There is nothing to propagate it
-    // to — the event has already been dispatched and no caller is waiting — so
-    // report it here and keep the subscription and the emitter alive.
-    FutureOr<void> guarded(T event) async {
-      try {
-        await onEvent(event);
-      } catch (error, stackTrace) {
-        logger.severe('${objectId} listener for ${event.runtimeType} failed', error, stackTrace);
-      }
+    FutureOr<void> Function(T) func = onEvent;
+    if (containErrors) {
+      final handler = func;
+      func = (event) async {
+        try {
+          await handler(event);
+        } catch (error, stackTrace) {
+          logger.severe('${objectId} listener for ${event.runtimeType} failed', error, stackTrace);
+        }
+      };
     }
-
-    FutureOr<void> Function(T) func = guarded;
     if (synchronized) {
       // ensure `onEvent` will trigger one by one (waits for previous `onEvent` to complete)
+      // Wraps the contained handler, so a handler that throws still releases the lock.
+      final handler = func;
       func = (event) async {
         await _syncLock.synchronized(() async {
-          await guarded(event);
+          await handler(event);
         });
       };
     }

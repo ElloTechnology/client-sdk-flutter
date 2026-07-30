@@ -119,7 +119,10 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
   // server-provided ice servers
   List<RTCIceServer> _serverProvidedIceServers = [];
 
-  late EventsListener<SignalEvent> _signalListener = signalClient.createListener(synchronized: true);
+  // Contained: an error escaping one of the engine's own signal handlers has
+  // no caller to reach and would surface in the hosting application's zone.
+  late EventsListener<SignalEvent> _signalListener =
+      signalClient.createListener(synchronized: true, containErrors: true);
 
   int _reconnectAttempts = 0;
   Timer? _reconnectTimeout;
@@ -168,8 +171,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
   bool _isReconnecting = false;
 
   /// Buffered bytes on the reliable publisher data channel, or null if not open.
-  int? get reliableBufferedAmount =>
-      _publisherDataChannel(Reliability.reliable)?.bufferedAmount;
+  int? get reliableBufferedAmount => _publisherDataChannel(Reliability.reliable)?.bufferedAmount;
 
   /// Whether the engine is currently in a reconnection attempt.
   bool get isReconnectingTransport => _isReconnecting;
@@ -1242,7 +1244,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
 
       await _signalListener.cancelAll();
 
-      _signalListener = signalClient.createListener(synchronized: true);
+      _signalListener = signalClient.createListener(synchronized: true, containErrors: true);
       _setUpSignalListeners();
 
       await connect(
