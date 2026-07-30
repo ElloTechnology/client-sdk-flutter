@@ -51,6 +51,7 @@ class TrackBitrateInfo {
 }
 
 typedef TransportOnOffer = void Function(rtc.RTCSessionDescription offer);
+typedef TransportOnNegotiationFailed = void Function(Object error, StackTrace stackTrace);
 typedef PeerConnectionCreate = Future<rtc.RTCPeerConnection> Function(Map<String, dynamic> configuration,
     [Map<String, dynamic> constraints]);
 
@@ -62,6 +63,7 @@ class Transport extends Disposable {
   bool restartingIce = false;
   bool renegotiate = false;
   TransportOnOffer? onOffer;
+  TransportOnNegotiationFailed? onNegotiationFailed;
   Function? _cancelDebounce;
   ConnectOptions connectOptions;
 
@@ -109,10 +111,22 @@ class Transport extends Disposable {
   }
 
   late final negotiate = Utils.createDebounceFunc(
-    (void _) => createAndSendOffer(),
+    (void _) => _createAndSendOfferReportingFailure(),
     cancelFunc: (f) => _cancelDebounce = f,
     wait: connectOptions.timeouts.debounce,
   );
+
+  /// The debounced [negotiate] fires from a timer, so nothing is left to await its
+  /// result — a failure here would otherwise escape as an unhandled async error and
+  /// never reach the recovery path that owns renegotiation failures.
+  Future<void> _createAndSendOfferReportingFailure() async {
+    try {
+      await createAndSendOffer();
+    } catch (error, stackTrace) {
+      logger.warning('[$objectId] negotiation failed with error: $error', error, stackTrace);
+      onNegotiationFailed?.call(error, stackTrace);
+    }
+  }
 
   Future<void> setRemoteDescription(rtc.RTCSessionDescription sd) async {
     if (isDisposed) {
