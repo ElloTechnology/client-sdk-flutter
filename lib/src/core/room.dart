@@ -746,13 +746,16 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
 
   Future<void> _onParticipantUpdateEvent(List<lk_models.ParticipantInfo> updates) async {
     // The local participant is created when the room reaches connected, so an
-    // update that arrives first waits for it. Once the room is disconnected
-    // that event can never arrive — the local participant was disposed with the
-    // rest of the session — and a signal update that lands in the teardown
-    // window would otherwise wait out the full duration and then raise.
+    // update that arrives first waits for it. Once the room is gone that event
+    // can never arrive — the local participant was disposed with the rest of
+    // the session — so a signal update landing in the teardown window would
+    // otherwise wait out the full duration and then raise. The test is
+    // deliberately `isDisposed` and not the connection state: `connect` reads
+    // back as disconnected for the whole websocket handshake, which is exactly
+    // when the update this wait exists for arrives.
     if (_localParticipant == null) {
-      if (isDisposed || connectionState == ConnectionState.disconnected) {
-        logger.fine('Ignoring ${updates.length} participant update(s) on a disconnected room');
+      if (isDisposed) {
+        logger.fine('Ignoring ${updates.length} participant update(s) on a disposed room');
         return;
       }
       try {
@@ -763,6 +766,14 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
         // Without a local participant its own info would be taken for a remote
         // participant's, so the batch is dropped rather than misapplied.
         logger.warning('Dropping ${updates.length} participant update(s): no local participant');
+        return;
+      }
+
+      // The wait yields, so the session that batch belongs to may be gone by
+      // the time it resolves; applying it then would rebuild participants onto
+      // a torn-down room.
+      if (isDisposed) {
+        logger.fine('Dropping ${updates.length} participant update(s): room disposed while waiting');
         return;
       }
     }
