@@ -26,10 +26,21 @@ import '../logger.dart';
 import '../support/disposable.dart';
 import '../types/other.dart';
 
+typedef EventErrorPredicate = bool Function(Object error);
+
+bool isTransientEventHandlerError(Object error) => error is TimeoutException;
+
 mixin EventsEmittable<T> {
   final events = EventsEmitter<T>();
-  EventsListener<T> createListener({bool synchronized = false}) =>
-      EventsListener<T>(events, synchronized: synchronized);
+  EventsListener<T> createListener({
+    bool synchronized = false,
+    EventErrorPredicate? containError,
+  }) =>
+      EventsListener<T>(
+        events,
+        synchronized: synchronized,
+        containError: containError,
+      );
 }
 
 // Type-safe, multi-listenable, dispose safe event handling
@@ -104,8 +115,10 @@ class EventsListener<T> extends EventsListenable<T> {
   EventsListener(
     this.emitter, {
     bool synchronized = false,
+    EventErrorPredicate? containError,
   }) : super(
           synchronized: synchronized,
+          containError: containError,
         );
 }
 
@@ -115,6 +128,17 @@ abstract class EventsListenable<T> extends Disposable {
   EventsEmitter<T> get emitter;
 
   final bool synchronized;
+
+  /// Selects errors that are reported here instead of raised.
+  ///
+  /// `Stream.listen` discards whatever a handler returns, so an error escaping
+  /// an async handler is delivered to the zone that created the subscription —
+  /// for an application embedding this SDK, its root zone. SDK-owned listeners
+  /// use a narrow predicate for expected transient failures. All other errors,
+  /// including application-handler and SDK invariant failures, keep reporting
+  /// to the host zone.
+  final EventErrorPredicate? containError;
+
   // keep track of listeners to cancel later
   final _listeners = <StreamSubscription<T>>[];
   final _syncLock = sync.Lock();
@@ -123,6 +147,7 @@ abstract class EventsListenable<T> extends Disposable {
 
   EventsListenable({
     required this.synchronized,
+    this.containError,
   }) {
     onDispose(() async {
       await cancelAll();
@@ -143,13 +168,28 @@ abstract class EventsListenable<T> extends Disposable {
 
   // listens to all events, guaranteed to be cancelled on dispose
   CancelListenFunc listen(FutureOr<void> Function(T) onEvent) {
-    //
     FutureOr<void> Function(T) func = onEvent;
+    if (containError != null) {
+      final handler = func;
+      func = (event) async {
+        try {
+          await handler(event);
+        } catch (error, stackTrace) {
+          if (containError!(error)) {
+            logger.severe('${objectId} listener for ${event.runtimeType} failed', error, stackTrace);
+            return;
+          }
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+      };
+    }
     if (synchronized) {
       // ensure `onEvent` will trigger one by one (waits for previous `onEvent` to complete)
+      // Wraps the contained handler, so a handler that throws still releases the lock.
+      final handler = func;
       func = (event) async {
         await _syncLock.synchronized(() async {
-          await onEvent(event);
+          await handler(event);
         });
       };
     }

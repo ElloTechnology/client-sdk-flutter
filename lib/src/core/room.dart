@@ -187,10 +187,12 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
               roomOptions: roomOptions,
             ) {
     //
-    _engineListener = this.engine.createListener();
+    // These carry detached SDK engine and signal handling. Expected transient
+    // timeouts are reported here; other failures reach the host zone.
+    _engineListener = this.engine.createListener(containError: isTransientEventHandlerError);
     _setUpEngineListeners();
 
-    _signalListener = this.engine.signalClient.createListener();
+    _signalListener = this.engine.signalClient.createListener(containError: isTransientEventHandlerError);
     _setUpSignalListeners();
 
     _pendingTrackQueue = PendingTrackQueue(
@@ -741,17 +743,42 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   }
 
   Future<void> _onParticipantUpdateEvent(List<lk_models.ParticipantInfo> updates) async {
-    // trigger change notifier only if list of participants membership is changed
-    var hasChanged = false;
-    for (final info in updates) {
-      // The local participant is not ready yet, waiting for the
-      // `RoomConnectedEvent` to create the local participant.
-      if (_localParticipant == null) {
+    // The local participant is created when the room reaches connected, so an
+    // update that arrives first waits for it. Once the room is gone that event
+    // can never arrive — the local participant was disposed with the rest of
+    // the session — so a signal update landing in the teardown window would
+    // otherwise wait out the full duration and then raise. The test is
+    // deliberately `isDisposed` and not the connection state: `connect` reads
+    // back as disconnected for the whole websocket handshake, which is exactly
+    // when the update this wait exists for arrives.
+    if (_localParticipant == null) {
+      if (isDisposed) {
+        logger.fine('Ignoring ${updates.length} participant update(s) on a disposed room');
+        return;
+      }
+      try {
         await events.waitFor<RoomConnectedEvent>(
           duration: const Duration(seconds: 10),
         );
+      } on TimeoutException {
+        // Without a local participant its own info would be taken for a remote
+        // participant's, so the batch is dropped rather than misapplied.
+        logger.warning('Dropping ${updates.length} participant update(s): no local participant');
+        return;
       }
 
+      // The wait yields, so the session that batch belongs to may be gone by
+      // the time it resolves; applying it then would rebuild participants onto
+      // a torn-down room.
+      if (isDisposed) {
+        logger.fine('Dropping ${updates.length} participant update(s): room disposed while waiting');
+        return;
+      }
+    }
+
+    // trigger change notifier only if list of participants membership is changed
+    var hasChanged = false;
+    for (final info in updates) {
       if (localParticipant?.identity == info.identity) {
         await localParticipant?.updateFromInfo(info);
         continue;
