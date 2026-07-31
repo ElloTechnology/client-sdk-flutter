@@ -232,4 +232,60 @@ void main() {
       );
     });
   });
+
+  group('RpcError.toString', () {
+    test('uses the local built-in message when data is null', () {
+      final error = RpcError.builtIn(RpcError.connectionTimeout);
+
+      expect(
+        error.toString(),
+        'RpcError(code: 1501, message: Connection timeout)',
+      );
+    });
+
+    test('does not render a remote message for a built-in code', () {
+      final error = RpcError(
+        code: RpcError.applicationError,
+        message: 'Learner Ada said a private thing',
+      );
+
+      expect(
+        error.toString(),
+        'RpcError(code: 1500, message: Application error in method handler)',
+      );
+    });
+
+    test('does not render a remote message for an unknown code', () {
+      final error = RpcError(
+        code: 1999,
+        message: 'secret supplied by the remote participant',
+      );
+
+      expect(error.toString(), 'RpcError(code: 1999)');
+    });
+
+    test('omits an empty data payload carried over from the proto', () {
+      // fromProto stores an absent payload as '' rather than null.
+      final error = RpcError.fromProto(RpcError.builtIn(RpcError.sendFailed).toProto());
+
+      expect(
+        error.toString(),
+        'RpcError(code: 1505, message: Failed to send)',
+      );
+    });
+
+    test('reports only the length of a populated data payload', () {
+      // The payload is remote-supplied and may carry user content, so it must
+      // not reach a log or crash reporter verbatim.
+      final error = RpcError.builtIn(
+        RpcError.applicationError,
+        data: '{"learner":"Ada","utterance":"my name is Ada"}',
+      );
+
+      expect(
+        error.toString(),
+        'RpcError(code: 1500, message: Application error in method handler, data: 46 chars)',
+      );
+    });
+  });
 }

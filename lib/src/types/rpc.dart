@@ -116,6 +116,29 @@ class RpcError implements Exception {
       data: data,
     );
   }
+
+  /// Carries the code and its locally defined built-in message so an error that
+  /// escapes to a crash reporter or log is identifiable.
+  ///
+  /// The instance [message] and [data] are chosen by the remote side and may
+  /// carry user content. The remote message is never rendered, and only the
+  /// data length is reported. Anything that needs either value should read it
+  /// directly and decide what is safe to record.
+  @override
+  String toString() {
+    final buffer = StringBuffer('RpcError(code: $code');
+    final builtInMessage = errorMessages[code];
+    if (builtInMessage != null) {
+      buffer.write(', message: $builtInMessage');
+    }
+    // fromProto stores an absent payload as '', so length is the test, not null.
+    if (data != null && data!.isNotEmpty) {
+      buffer.write(', data: ${data!.length} chars');
+    }
+    buffer.write(')');
+
+    return buffer.toString();
+  }
 }
 
 /// Maximum payload size for RPC requests and responses. If a payload exceeds this size,
