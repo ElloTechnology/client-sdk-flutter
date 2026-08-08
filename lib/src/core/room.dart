@@ -90,6 +90,13 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   /// Utilization ratio (0.0–1.0) of the reliable reconnection buffer.
   double get reliableBufferUtilization => engine.reliableBufferUtilization;
 
+  /// RPCs issued from this room that have not yet resolved.
+  ///
+  /// Counts both those still awaiting an acknowledgement and those acknowledged
+  /// but awaiting a response — the RPC client tracks them in one structure, so
+  /// the two cannot be reported apart.
+  int get pendingRpcCount => _rpcClientManager.pendingCount;
+
   /// Cumulative number of data packets sent.
   int get dataPublishCount => engine.dataPublishCount;
 
