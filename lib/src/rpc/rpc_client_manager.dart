@@ -58,7 +58,11 @@ class RpcClientManager {
     final requestId = _uuid.v4();
     final completer = Completer<String>();
 
-    const maxRoundTripLatency = Duration(seconds: 7);
+    // Callers on devices where the Dart event loop can be starved for seconds
+    // raise this so a late acknowledgement is not misread as an unreachable
+    // recipient. It also sets the recipient's work budget, which is whatever
+    // remains of the response timeout once the round trip is accounted for.
+    final maxRoundTripLatency = params.ackTimeout ?? const Duration(seconds: 7);
     const minEffectiveTimeout = Duration(milliseconds: 1000);
     final effectiveTimeoutMs = math.max(
       minEffectiveTimeout.inMilliseconds,
