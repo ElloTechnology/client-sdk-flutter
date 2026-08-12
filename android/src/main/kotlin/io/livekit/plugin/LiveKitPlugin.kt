@@ -454,6 +454,8 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
 
       "warmupFFT" -> {
         handleWarmupFFT(result)
+      }
+
       "setAudioProcessingOptions" -> {
         handleSetAudioProcessingOptions(call, result)
       }
