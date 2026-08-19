@@ -367,16 +367,24 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
       return;
     }
     _hasPublished = true;
+    // Debounced: the offer is created off a timer, so failures arrive via
+    // publisher.onNegotiationFailed rather than out of this call.
+    publisher!.negotiate(null);
+  }
+
+  Future<void> _handleNegotiationFailed(Object error) async {
+    if (error is NegotiationError) {
+      fullReconnectOnNext = true;
+    }
     try {
-      publisher!.negotiate(null);
-    } catch (error) {
-      if (error is NegotiationError) {
-        fullReconnectOnNext = true;
-      }
       await handleReconnect(
         ClientDisconnectReason.negotiationFailed,
         reconnectReason: lk_models.ReconnectReason.RR_UNKNOWN,
       );
+    } catch (e, stackTrace) {
+      // Nothing is awaiting this recovery, so a failure here would otherwise be
+      // lost as an unhandled async error.
+      logger.warning('recovery from negotiation failure failed with error: $e', e, stackTrace);
     }
   }
 
@@ -716,6 +724,11 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
     publisher?.onOffer = (offer) {
       logger.fine('publisher onOffer');
       signalClient.sendOffer(offer);
+    };
+
+    publisher?.onNegotiationFailed = (error, stackTrace) {
+      logger.warning('publisher onNegotiationFailed: $error', error, stackTrace);
+      unawaited(_handleNegotiationFailed(error));
     };
 
     // in subscriber primary mode, server side opens sub data channels.

@@ -55,6 +55,7 @@ class TrackBitrateInfo {
 }
 
 typedef TransportOnOffer = void Function(rtc.RTCSessionDescription offer);
+typedef TransportOnNegotiationFailed = void Function(Object error, StackTrace stackTrace);
 typedef PeerConnectionCreate = Future<rtc.RTCPeerConnection> Function(Map<String, dynamic> configuration,
     [Map<String, dynamic> constraints]);
 
@@ -66,6 +67,7 @@ class Transport extends Disposable {
   bool restartingIce = false;
   bool renegotiate = false;
   TransportOnOffer? onOffer;
+  TransportOnNegotiationFailed? onNegotiationFailed;
   Function? _cancelDebounce;
   ConnectOptions connectOptions;
 
@@ -75,6 +77,11 @@ class Transport extends Disposable {
     onDispose(() async {
       _cancelDebounce?.call();
       _cancelDebounce = null;
+
+      // A negotiation already in flight must not report into whatever replaced
+      // this transport.
+      onOffer = null;
+      onNegotiationFailed = null;
 
       // Ensure callbacks won't fire any more
       pc.onRenegotiationNeeded = null;
@@ -113,10 +120,29 @@ class Transport extends Disposable {
   }
 
   late final negotiate = Utils.createDebounceFunc(
-    (void _) => createAndSendOffer(),
+    (void _) => _createAndSendOfferReportingFailure(),
     cancelFunc: (f) => _cancelDebounce = f,
     wait: connectOptions.timeouts.debounce,
   );
+
+  /// The debounced [negotiate] fires from a timer, so nothing is left to await its
+  /// result — a failure here would otherwise escape as an unhandled async error and
+  /// never reach the recovery path that owns renegotiation failures.
+  Future<void> _createAndSendOfferReportingFailure() async {
+    try {
+      await createAndSendOffer();
+    } catch (error, stackTrace) {
+      // A call already issued to the native layer rejects rather than returning
+      // when disposal frees the connection underneath it. That is teardown, not a
+      // negotiation failure, and must not drive recovery for a dead transport.
+      if (isDisposed) {
+        logger.warning('[$objectId] negotiation aborted by disposal: $error');
+        return;
+      }
+      logger.warning('[$objectId] negotiation failed with error: $error', error, stackTrace);
+      onNegotiationFailed?.call(error, stackTrace);
+    }
+  }
 
   Future<void> setRemoteDescription(rtc.RTCSessionDescription sd) async {
     if (isDisposed) {
@@ -143,6 +169,16 @@ class Transport extends Disposable {
     }
   }
 
+  /// Disposal closes and frees the native peer connection, and [isDisposed] flips
+  /// before that teardown runs. Negotiation spans several round-trips to the native
+  /// layer, so every resumption point has to re-check before touching [pc] again —
+  /// otherwise the call lands on a connection that no longer exists.
+  bool get _disposedMidNegotiation {
+    if (!isDisposed) return false;
+    logger.warning('[$objectId] createAndSendOffer() disposed mid-negotiation, aborting');
+    return true;
+  }
+
   Future<void> createAndSendOffer([RTCOfferOptions? options]) async {
     if (isDisposed) {
       logger.warning('[$objectId] createAndSendOffer() already disposed');
@@ -159,14 +195,20 @@ class Transport extends Disposable {
       restartingIce = true;
     }
 
-    if (await pc.getSignalingState() == rtc.RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
+    final signalingState = await pc.getSignalingState();
+    if (_disposedMidNegotiation) return;
+
+    if (signalingState == rtc.RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
       // we're waiting for the peer to accept our offer, so we'll just wait
       // the only exception to this is when ICE restart is needed
       final currentSD = await getRemoteDescription();
+      if (_disposedMidNegotiation) return;
+
       if ((options?.iceRestart ?? false) && currentSD != null) {
         // TODO: handle when ICE restart is needed but we don't have a remote description
         // the best thing to do is to recreate the peerconnection
         await pc.setRemoteDescription(currentSD);
+        if (_disposedMidNegotiation) return;
       } else {
         renegotiate = true;
         return;
@@ -175,11 +217,13 @@ class Transport extends Disposable {
 
     if (restartingIce && !lkPlatformIs(PlatformType.web)) {
       await pc.restartIce();
+      if (_disposedMidNegotiation) return;
     }
 
     // actually negotiate
     logger.fine('starting to negotiate');
     final offer = await pc.createOffer(options?.toMap() ?? <String, dynamic>{});
+    if (_disposedMidNegotiation) return;
 
     final sdpParsed = sdp_transform.parse(offer.sdp ?? '');
     sdpParsed['media']?.forEach((media) {
@@ -223,6 +267,9 @@ class Transport extends Disposable {
     } catch (e) {
       throw NegotiationError(e.toString());
     }
+    // Disposal can abort setMungedSDP before the description is applied, and an
+    // offer the local peer never adopted must not be published.
+    if (_disposedMidNegotiation) return;
     onOffer?.call(offer);
   }
 
@@ -317,6 +364,9 @@ class Transport extends Disposable {
       } catch (e) {
         logger.warning('not able to set ${sd.type}, falling back to unmodified sdp error: $e, sdp: $munged ');
         sd.sdp = originalSdp;
+        // A description only fails to apply because the connection went away once
+        // disposal has run; retrying the unmodified sdp would fail the same way.
+        if (_disposedMidNegotiation) return;
       }
     }
 
