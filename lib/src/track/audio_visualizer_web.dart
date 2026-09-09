@@ -27,6 +27,9 @@ class AudioVisualizerWeb extends AudioVisualizer {
   }
 
   @override
+  String? get audioContextState => _audioAnalyser?.contextState();
+
+  @override
   Future<void> start() async {
     if (_audioAnalyser != null) {
       return;

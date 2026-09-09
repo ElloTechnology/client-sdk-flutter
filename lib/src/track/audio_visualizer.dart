@@ -27,6 +27,14 @@ abstract class AudioVisualizer extends DisposableChangeNotifier with EventsEmitt
 
   Future<void> start();
   Future<void> stop();
+
+  /// State of the WebAudio context driving this visualizer (`running`,
+  /// `suspended` or `closed`), or null on platforms that do not use one.
+  ///
+  /// A suspended context reports no audio at all, which reads exactly like a
+  /// silent track. Callers that act on "this visualizer went quiet" need this to
+  /// tell a quiet speaker from a stalled graph.
+  String? get audioContextState => null;
 }
 
 AudioVisualizer createVisualizer(AudioTrack track, {AudioVisualizerOptions? options}) =>
