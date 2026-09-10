@@ -30,14 +30,6 @@ class AudioAnalyser {
   final web.AnalyserNode analyser;
   final Future<void> Function() cleanup;
 
-  /// The shared context's current state, read live.
-  ///
-  /// A suspended context reports `-Infinity` in every frequency bin for as long
-  /// as it stays suspended, which is indistinguishable from an analyser wired to
-  /// a genuinely silent track. Callers that report "no audio" need this to tell
-  /// the two apart.
-  final String Function() contextState;
-
   /// Held only so the source node cannot be collected while the graph is live.
   final web.MediaStreamAudioSourceNode source;
 
@@ -45,7 +37,6 @@ class AudioAnalyser {
     required this.calculateVolume,
     required this.analyser,
     required this.cleanup,
-    required this.contextState,
     required this.source,
   });
 }
@@ -202,7 +193,6 @@ AudioAnalyser? createAudioAnalyser(
     calculateVolume: calculateVolume,
     analyser: analyser,
     cleanup: cleanup,
-    contextState: () => audioContext.state,
     source: mediaStreamSource,
   );
 }
