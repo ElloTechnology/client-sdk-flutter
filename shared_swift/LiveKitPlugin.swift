@@ -1059,6 +1059,11 @@ class LKAudioEngineObserver: NSObject, RTCAudioDeviceModuleDelegate {
 
     // MARK: RTCAudioDeviceModuleDelegate, engine lifecycle
 
+    // Both callbacks receive the engine's state after the transition, not the
+    // change. willEnable fires when playout or recording goes from disabled to
+    // enabled, didDisable when either goes from enabled to disabled, so either
+    // one can arrive while the other side stays enabled.
+
     func audioDeviceModule(_: RTCAudioDeviceModule,
                            willEnableEngine _: AVAudioEngine,
                            isPlayoutEnabled: Bool,
@@ -1106,15 +1111,18 @@ class LKAudioEngineObserver: NSObject, RTCAudioDeviceModuleDelegate {
                 }
                 resultCode = LiveKitPlugin.kAudioEngineErrorFailedToConfigureAudioSession
             }
-        } else if let error = releaseActivation() {
-            // Only an activation this observer took is returned, so an external
-            // call system's activation and a manual-mode app's are left alone.
-            // Leave sessionActive unchanged (still true) so cached state
-            // keeps reflecting the live session. Flipping it to false here
-            // would make a later configureNativeAudio(automatic:) cache-only
-            // while the session is in fact still active.
-            reportSessionFailure("didDisable: failed to deactivate audio session", error)
-            resultCode = LiveKitPlugin.kAudioEngineErrorFailedToConfigureAudioSession
+        } else {
+            // Nothing is enabled any more. Return the activation this observer
+            // took; an external call system's or a manual-mode app's activation
+            // is not this observer's to return.
+            if let error = releaseActivation() {
+                // Leave sessionActive unchanged (still true) so cached state
+                // keeps reflecting the live session. Flipping it to false here
+                // would make a later configureNativeAudio(automatic:) cache-only
+                // while the session is in fact still active.
+                reportSessionFailure("didDisable: failed to deactivate audio session", error)
+                resultCode = LiveKitPlugin.kAudioEngineErrorFailedToConfigureAudioSession
+            }
         }
         if resultCode == 0 {
             recordEngineState(isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled)
