@@ -404,7 +404,15 @@ public class LiveKitPlugin: NSObject, FlutterPlugin {
         #if os(macOS)
         result(FlutterMethodNotImplemented)
         #else
-        if let error = LiveKitPlugin.deactivateAudioSession() {
+        // Through the observer, so a deactivation that returns the observer's
+        // activation is not returned again on the next full engine disable.
+        let error: Error?
+        if let observer = audioEngineObserver {
+            error = observer.deactivateSession()
+        } else {
+            error = LiveKitPlugin.deactivateAudioSession()
+        }
+        if let error {
             print("[LiveKit] Deactivate audio session error: ", error)
             result(FlutterError(code: "deactivateAudioSession", message: error.localizedDescription, details: nil))
         } else {
@@ -800,62 +808,132 @@ extension LiveKitPlugin {
     /// operation when the audio session cannot be configured.
     static let kAudioEngineErrorFailedToConfigureAudioSession = -4100
 
-    /// Applies an `RTCAudioSessionConfiguration` to the shared `RTCAudioSession`,
-    /// activating it when `isActive` is true. Returns the thrown error, if any,
+    /// How `applyAudioSessionConfiguration` treats session activation.
+    enum AudioSessionActivation {
+        /// Apply the configuration only. Activation is someone else's.
+        case configureOnly
+        /// Apply the configuration and take one activation.
+        case activate
+        /// Apply the configuration for a caller that already holds an
+        /// activation. If `RTCAudioSession` reports the session inactive,
+        /// re-activate `AVAudioSession` and leave the activation count as it
+        /// was.
+        case reactivateIfInactive
+    }
+
+    /// Applies an `RTCAudioSessionConfiguration` to the shared `RTCAudioSession`
+    /// and activates it as `activation` asks. Returns the first error, if any,
     /// and whether this call added an activation to `RTCAudioSession`'s count.
     /// Safe to call on any thread.
     ///
-    /// `setConfiguration(_:active:)` keeps going after a failed step, so an
-    /// error does not mean the activation failed. `setActive(true)` counts an
-    /// activation exactly when it leaves the session active, so `didActivate`
-    /// is read back from `isActive` before the configuration lock is released.
+    /// The configuration is applied configure-only and activation is a separate
+    /// `setActive(true)`, whose result is the exact signal for an added
+    /// activation: `RTCAudioSession` increments its count exactly when that
+    /// call succeeds. `setConfiguration(_:active:)` would fold the activation
+    /// result into an error that other steps also set, and `isActive` cannot
+    /// stand in for it, because interruption and CallKit handlers write it
+    /// without the configuration lock.
     static func applyAudioSessionConfiguration(_ configuration: RTCAudioSessionConfiguration,
                                                forceSpeakerOutput: Bool,
-                                               isActive: Bool) -> (error: Error?, didActivate: Bool) {
+                                               activation: AudioSessionActivation) -> (error: Error?, didActivate: Bool) {
         let rtcSession = RTCAudioSession.sharedInstance()
         rtcSession.lockForConfiguration()
         defer { rtcSession.unlockForConfiguration() }
         var failure: Error?
+        var didActivate = false
+        var didReachAVAudioSession = false
+
         do {
-            if isActive {
-                try rtcSession.setConfiguration(configuration, active: true)
-            } else {
-                // Configure-only variant. setConfiguration(_:active:) always
-                // forwards its active flag to setActive, so passing false here
-                // would deactivate the session an external call system just
-                // activated.
-                try rtcSession.setConfiguration(configuration)
-            }
-            // overrideOutputAudioPort hard-routes to the speaker even over a
-            // connected headset. Plain speaker preference is expressed by the
-            // selected audio mode/category options, so clear any stale hard
-            // override unless the app explicitly forced speaker output.
-            // Only valid for the playAndRecord category. Applied regardless of
-            // who owns activation, since under an external call system the
-            // session is active during a call even though isActive is false.
-            if configuration.category == AVAudioSession.Category.playAndRecord.rawValue {
-                do {
-                    try rtcSession.overrideOutputAudioPort(forceSpeakerOutput ? .speaker : .none)
-                } catch {
-                    // Before the external call system activates the session the
-                    // override can fail. Tolerate it, the configuration itself
-                    // succeeded and the override is re-applied on the next
-                    // engine lifecycle event.
-                    guard !isActive else { throw error }
-                    print("[LiveKit] overrideOutputAudioPort skipped, session not active yet: \(error)")
-                }
-            }
+            // Configure-only variant. setConfiguration(_:active:) always
+            // forwards its active flag to setActive, so passing false here
+            // would deactivate the session an external call system activated.
+            try rtcSession.setConfiguration(configuration)
         } catch {
             failure = error
         }
-        return (failure, isActive && rtcSession.isActive)
+
+        switch activation {
+        case .configureOnly:
+            break
+        case .activate:
+            do {
+                try rtcSession.setActive(true)
+                didActivate = true
+                didReachAVAudioSession = true
+            } catch {
+                failure = error
+            }
+        case .reactivateIfInactive:
+            // The caller's activation can outlive the real session: an
+            // interruption that never ends, or an engine start that rolled
+            // back, leaves isActive false while the count stays above zero.
+            // RTCAudioSession then calls AVAudioSession on the next activation
+            // only, so take one and return it. With the caller's activation
+            // still counted, the return only decrements and the session stays
+            // active. If that activation is gone from the count, keep the new
+            // one in its place.
+            guard !rtcSession.isActive else { break }
+            do {
+                try rtcSession.setActive(true)
+                didReachAVAudioSession = true
+                if rtcSession.activationCount > 1 {
+                    try rtcSession.setActive(false)
+                } else {
+                    didActivate = true
+                }
+            } catch {
+                failure = error
+            }
+        }
+
+        if didReachAVAudioSession {
+            // Preferred channel counts apply only to an active session, so the
+            // configure-only pass above skipped them. The other steps are
+            // no-ops now that they match.
+            do {
+                try rtcSession.setConfiguration(configuration)
+            } catch {
+                failure = failure ?? error
+            }
+        }
+
+        // overrideOutputAudioPort hard-routes to the speaker even over a
+        // connected headset. Plain speaker preference is expressed by the
+        // selected audio mode/category options, so clear any stale hard
+        // override unless the app explicitly forced speaker output.
+        // Only valid for the playAndRecord category. Applied regardless of
+        // who owns activation, since under an external call system the
+        // session is active during a call even though isActive is false.
+        if failure == nil, configuration.category == AVAudioSession.Category.playAndRecord.rawValue {
+            do {
+                try rtcSession.overrideOutputAudioPort(forceSpeakerOutput ? .speaker : .none)
+            } catch {
+                // Before the external call system activates the session the
+                // override can fail. Tolerate it, the configuration itself
+                // succeeded and the override is re-applied on the next
+                // engine lifecycle event.
+                if activation == .configureOnly {
+                    print("[LiveKit] overrideOutputAudioPort skipped, session not active yet: \(error)")
+                } else {
+                    failure = error
+                }
+            }
+        }
+        return (failure, didActivate)
     }
 
-    /// Deactivates the shared `RTCAudioSession`. Returns `nil` on success.
+    /// Returns one activation to the shared `RTCAudioSession`. Returns `nil` on
+    /// success or when the count is already zero: a deactivation then reaches
+    /// no `AVAudioSession` call and would only drive the count negative, after
+    /// which no later balanced deactivation could deactivate the session.
     static func deactivateAudioSession() -> Error? {
         let rtcSession = RTCAudioSession.sharedInstance()
         rtcSession.lockForConfiguration()
         defer { rtcSession.unlockForConfiguration() }
+        guard rtcSession.activationCount > 0 else {
+            print("[LiveKit] deactivateAudioSession skipped, no activation to return")
+            return nil
+        }
         do {
             try rtcSession.setActive(false)
             return nil
@@ -966,14 +1044,16 @@ class LKAudioEngineObserver: NSObject, RTCAudioDeviceModuleDelegate {
             // Manual mode: the app owns activation and its balancing.
             return LiveKitPlugin.applyAudioSessionConfiguration(configuration,
                                                                 forceSpeakerOutput: forceSpeakerOutput,
-                                                                isActive: isActivationEnabled).error
+                                                                activation: isActivationEnabled ? .activate : .configureOnly).error
         }
         return applyConfiguration(configuration,
                                   forceSpeakerOutput: forceSpeakerOutput,
-                                  isActivationEnabled: isActivationEnabled).error
+                                  isActivationEnabled: isActivationEnabled,
+                                  reactivatesIfInactive: false).error
     }
 
-    private func applyManagedConfiguration(isRecordingEnabled: Bool) -> (error: Error?, didActivate: Bool) {
+    private func applyManagedConfiguration(isRecordingEnabled: Bool,
+                                           reactivatesIfInactive: Bool) -> (error: Error?, didActivate: Bool) {
         lock.lock()
         let shouldManageSession = isAutomaticManagementEnabled
         let configuration = effectiveConfigurationLocked(isRecordingEnabled: isRecordingEnabled)
@@ -984,20 +1064,32 @@ class LKAudioEngineObserver: NSObject, RTCAudioDeviceModuleDelegate {
         guard shouldManageSession, let configuration else { return (nil, false) }
         return applyConfiguration(configuration,
                                   forceSpeakerOutput: forceSpeakerOutput,
-                                  isActivationEnabled: isActivationEnabled)
+                                  isActivationEnabled: isActivationEnabled,
+                                  reactivatesIfInactive: reactivatesIfInactive)
     }
 
     /// Applies `configuration`, activating the session only when this observer
     /// does not hold an activation yet. A configuration change while the engine
     /// stays enabled is configure-only, so the activation count stays balanced.
+    /// With `reactivatesIfInactive`, a held activation whose session is no
+    /// longer active is re-activated without changing the count.
     private func applyConfiguration(_ configuration: RTCAudioSessionConfiguration,
                                     forceSpeakerOutput: Bool,
-                                    isActivationEnabled: Bool) -> (error: Error?, didActivate: Bool) {
+                                    isActivationEnabled: Bool,
+                                    reactivatesIfInactive: Bool) -> (error: Error?, didActivate: Bool) {
         activationLock.lock()
         defer { activationLock.unlock() }
+        let activation: LiveKitPlugin.AudioSessionActivation
+        if !isActivationEnabled {
+            activation = .configureOnly
+        } else if !ownsActivation {
+            activation = .activate
+        } else {
+            activation = reactivatesIfInactive ? .reactivateIfInactive : .configureOnly
+        }
         let result = LiveKitPlugin.applyAudioSessionConfiguration(configuration,
                                                                   forceSpeakerOutput: forceSpeakerOutput,
-                                                                  isActive: isActivationEnabled && !ownsActivation)
+                                                                  activation: activation)
         if result.didActivate {
             ownsActivation = true
         }
@@ -1012,6 +1104,16 @@ class LKAudioEngineObserver: NSObject, RTCAudioDeviceModuleDelegate {
         guard ownsActivation else { return nil }
         // RTCAudioSession decrements its count whether or not the deactivation
         // succeeds, so the activation is returned either way.
+        ownsActivation = false
+        return LiveKitPlugin.deactivateAudioSession()
+    }
+
+    /// Deactivates the session on the app's request. When this observer holds
+    /// an activation, the app's deactivation returns it, so a later full engine
+    /// disable does not return it a second time.
+    func deactivateSession() -> Error? {
+        activationLock.lock()
+        defer { activationLock.unlock() }
         ownsActivation = false
         return LiveKitPlugin.deactivateAudioSession()
     }
@@ -1071,7 +1173,13 @@ class LKAudioEngineObserver: NSObject, RTCAudioDeviceModuleDelegate {
         var resultCode = 0
         #if !os(macOS)
         if isPlayoutEnabled || isRecordingEnabled {
-            let (error, didActivate) = applyManagedConfiguration(isRecordingEnabled: isRecordingEnabled)
+            // A held activation can outlive the real session: an engine start
+            // that rolled back sends no didDisable, and an interruption that
+            // never ends leaves the session inactive. Without a re-activation
+            // here, every later enable would be configure-only and the engine
+            // would run on an inactive session.
+            let (error, didActivate) = applyManagedConfiguration(isRecordingEnabled: isRecordingEnabled,
+                                                                 reactivatesIfInactive: true)
             if let error {
                 reportSessionFailure("willEnable: failed to configure audio session", error)
                 // The engine rolls this enable back without a disable event,
@@ -1103,7 +1211,8 @@ class LKAudioEngineObserver: NSObject, RTCAudioDeviceModuleDelegate {
             // example, mic off while remote playout continues). Re-apply so
             // dynamic category selection follows the new engine state. The
             // activation taken on enable is kept, so this is configure-only.
-            let (error, didActivate) = applyManagedConfiguration(isRecordingEnabled: isRecordingEnabled)
+            let (error, didActivate) = applyManagedConfiguration(isRecordingEnabled: isRecordingEnabled,
+                                                                 reactivatesIfInactive: false)
             if let error {
                 reportSessionFailure("didDisable: failed to configure audio session", error)
                 if didActivate, let releaseError = releaseActivation() {
