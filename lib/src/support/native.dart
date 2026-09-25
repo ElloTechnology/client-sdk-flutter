@@ -409,6 +409,14 @@ class Native {
           );
         }
         return null;
+      case 'onAudioSessionError':
+        final args = call.arguments;
+        if (args is Map) {
+          logger.warning(
+            'Audio session error, ${args['message']}: ${args['domain']} ${args['code']} ${args['description']}',
+          );
+        }
+        return null;
       default:
         logger.warning('Method ${call.method} is not implemented.');
         return null;
