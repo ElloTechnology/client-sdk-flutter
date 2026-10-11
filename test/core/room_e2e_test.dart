@@ -26,6 +26,7 @@ import 'package:livekit_client/src/internal/events.dart';
 import 'package:livekit_client/src/proto/livekit_models.pb.dart' as lk_models;
 import 'package:livekit_client/src/proto/livekit_rtc.pb.dart' as lk_rtc;
 import '../mock/e2e_container.dart';
+import '../mock/peerconnection_mock.dart';
 import '../mock/test_data.dart';
 import '../mock/websocket_mock.dart';
 import 'signal_client_test.dart';
@@ -327,6 +328,42 @@ void main() {
       await republish;
 
       expect(participant.getTrackPublicationBySource(TrackSource.microphone), isNull);
+    });
+  });
+
+  group('resume with a failing reliable resend', () {
+    // XP-3535: the resume path resent buffered reliable messages with a dropped
+    // `channel.send` future and only a synchronous try/catch around it. A send
+    // whose future completed with an error had no handler, so the error reached
+    // the root zone (here: the test zone, which fails the test).
+    test('counts the failure instead of leaving it unhandled', () async {
+      final reliableChannels = mockDataChannels.where((dc) => dc.label == '_reliable').toList();
+      // A non-empty WebRTC send buffer keeps the published packet in the
+      // engine's resend buffer instead of aligning it away. Dropping sends
+      // stops the mock loopback from delivering the packet back to the room.
+      for (final dc in reliableChannels) {
+        dc.bufferedAmountLowThreshold = 1 << 20;
+        dc.onMessageSend = null;
+      }
+      await room.localParticipant!.publishData([1, 2, 3], reliable: true);
+      expect(container.engine.reliableBufferPacketCount, 1);
+      final failuresBefore = room.dataPublishFailureCount;
+
+      for (final dc in reliableChannels) {
+        dc.onMessageSend = (_) => throw StateError('data channel send failed');
+      }
+
+      final reconnected = container.engine.events.waitFor<SignalReconnectedEvent>(
+        duration: const Duration(seconds: 1),
+      );
+      ws.onData(
+        lk_rtc.SignalResponse(reconnect: lk_rtc.ReconnectResponse(lastMessageSeq: 0)).writeToBuffer(),
+      );
+      await reconnected;
+      // Let the failed send future complete.
+      await Future<void>.delayed(Duration.zero);
+
+      expect(room.dataPublishFailureCount, failuresBefore + 1);
     });
   });
 }

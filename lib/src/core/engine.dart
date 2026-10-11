@@ -444,12 +444,21 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
     logger.fine('Resending ${messagesToResend.length} reliable messages');
 
     for (final item in messagesToResend) {
+      void onResendFailed(Object e) {
+        _dataPublishFailureCount++;
+        logger.warning('Failed to resend reliable message ${item.sequence}: $e');
+      }
+
+      // A send can fail either way: web throws synchronously, while the
+      // Future<void> contract lets an implementation complete with an error.
+      // The returned future has no other holder, so it gets its own handler
+      // or that error reaches the root zone.
       try {
         // Fire-and-forget: awaiting causes unneeded main-thread dispatches
-        unawaited(channel.send(item.message));
+        unawaited(channel.send(item.message).catchError(onResendFailed));
         logger.fine('Resent reliable message with sequence ${item.sequence}');
       } catch (e) {
-        logger.warning('Failed to resend reliable message ${item.sequence}: $e');
+        onResendFailed(e);
       }
     }
   }

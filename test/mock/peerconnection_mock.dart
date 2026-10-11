@@ -283,10 +283,7 @@ a=rtpmap:32 MPV/90000
   Future<bool> removeTrack(RTCRtpSender sender) async => true;
 
   @override
-  Future<void> setConfiguration(Map<String, dynamic> configuration) {
-    // TODO: implement setConfiguration
-    throw UnimplementedError();
-  }
+  Future<void> setConfiguration(Map<String, dynamic> configuration) async {}
 
   static Future<RTCPeerConnection> create(Map<String, dynamic> configuration,
           [Map<String, dynamic>? constraints]) async =>
