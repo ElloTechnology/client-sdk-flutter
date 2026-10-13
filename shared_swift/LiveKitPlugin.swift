@@ -1004,10 +1004,14 @@ class LKAudioEngineObserver: NSObject, RTCAudioDeviceModuleDelegate {
 
     // MARK: RTCAudioDeviceModuleDelegate, engine lifecycle
 
+    // `isVoiceProcessingEnabled` reports whether Apple Voice Processing I/O will
+    // be instantiated for this transition. The session mode comes from the
+    // configuration pushed from Dart, so the value is not consulted here.
     func audioDeviceModule(_: RTCAudioDeviceModule,
                            willEnableEngine _: AVAudioEngine,
                            isPlayoutEnabled: Bool,
-                           isRecordingEnabled: Bool) -> Int {
+                           isRecordingEnabled: Bool,
+                           isVoiceProcessingEnabled _: Bool) -> Int {
         var resultCode = 0
         #if !os(macOS)
         if isPlayoutEnabled || isRecordingEnabled {
