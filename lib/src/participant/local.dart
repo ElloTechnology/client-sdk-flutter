@@ -607,11 +607,16 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
   /// Failures are not rethrown, because the reconnect itself has completed and
   /// its caller must still announce it. A dropped track has no publication
   /// afterwards, so `setSourceEnabled` publishes fresh capture for its source.
+  ///
+  /// A failure on a connected engine is logged at severe. Once the engine has
+  /// closed or left the connected state the failure follows from that, not
+  /// from the server, and is logged at warning.
   Future<void> rePublishAllTracks() async {
     final publications = trackPublications.values.toList();
     trackPublications.clear();
     for (final publication in publications) {
       final track = publication.track;
+      final previousTransceiver = track?.transceiver;
       try {
         if (publication.muted || track?.muted == true) {
           // stopOnMute disposes native capture while retaining the publication.
@@ -624,7 +629,20 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
           await publishVideoTrack(track);
         }
       } on Exception catch (error, stackTrace) {
-        logger.severe('reconnect republish failed for ${publication.source.name} track', error, stackTrace);
+        final engine = room.engine;
+        if (engine.isClosed || engine.connectionState != ConnectionState.connected) {
+          logger.warning(
+            'reconnect republish abandoned for ${publication.source.name} track, '
+            'connectionState: ${engine.connectionState}',
+            error,
+            stackTrace,
+          );
+        } else {
+          logger.severe('reconnect republish failed for ${publication.source.name} track', error, stackTrace);
+        }
+        if (track != null) {
+          await _removeUnconfirmedSender(track, previousTransceiver);
+        }
         // Nothing owns the track once its publication is gone, so its capture
         // would keep running unseen.
         try {
@@ -633,6 +651,31 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
           logger.warning('failed to dispose track after republish failure: $disposeError');
         }
       }
+    }
+  }
+
+  /// Removes the sender a failed republish added to the publisher connection.
+  ///
+  /// A publish can add its sender before the server confirms the track. Left in
+  /// place, a late confirmation would publish that sender as a second track
+  /// for the source once fresh capture is published, carrying no audio or
+  /// video. A sender the track kept from before the reconnect belongs to the
+  /// closed connection and is left alone.
+  Future<void> _removeUnconfirmedSender(LocalTrack track, rtc.RTCRtpTransceiver? previousTransceiver) async {
+    final transceiver = track.transceiver;
+    if (transceiver == null || identical(transceiver, previousTransceiver)) {
+      return;
+    }
+    try {
+      // Backup-codec senders are only added for a confirmed publication, so the
+      // primary sender is the only one a failed publish can leave behind.
+      await room.engine.publisher?.pc.removeTrack(transceiver.sender);
+      if (!isDisposed) {
+        // manual negotiation since track changed
+        await room.engine.negotiate();
+      }
+    } catch (error) {
+      logger.warning('failed to remove sender after republish failure: $error');
     }
   }
 

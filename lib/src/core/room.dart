@@ -143,6 +143,11 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   // Whether the one-time RoomOptions speaker preference bridge has run.
   bool _legacySpeakerBridged = false;
 
+  // Advances whenever the engine starts another reconnect or disconnects. A
+  // full restart's republish can outlast its own connection, so its completion
+  // only announces the reconnect while nothing has replaced that connection.
+  int _connectionEpoch = 0;
+
   lk_models.Room? _roomInfo;
 
   /// a list of participants that are actively speaking, including local participant.
@@ -580,6 +585,7 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       notifyListeners();
     })
     ..on<EngineFullRestartingEvent>((event) async {
+      _connectionEpoch++;
       events.emit(const RoomReconnectingEvent());
 
       // reset params
@@ -601,25 +607,34 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       notifyListeners();
     })
     ..on<EngineRestartedEvent>((event) async {
+      final epoch = _connectionEpoch;
       try {
         // re-publish all tracks
         await localParticipant?.rePublishAllTracks();
       } finally {
         // The engine has reconnected whether or not every track came back, and
         // listeners need the reconnected event to leave their reconnecting
-        // state and repair what is missing.
-        for (var participant in _remoteParticipants.toList()) {
-          for (var pub in participant.trackPublications.values.toList()) {
-            if (pub.subscribed) {
-              pub.sendUpdateTrackSettings();
+        // state and repair what is missing. A reconnect or disconnect that
+        // began while the tracks were republishing owns what comes next: a
+        // newer restart announces itself, and a disconnect reaches listeners
+        // as RoomDisconnectedEvent.
+        if (epoch == _connectionEpoch && !engine.isClosed && engine.connectionState == ConnectionState.connected) {
+          for (var participant in _remoteParticipants.toList()) {
+            for (var pub in participant.trackPublications.values.toList()) {
+              if (pub.subscribed) {
+                pub.sendUpdateTrackSettings();
+              }
             }
           }
+          events.emit(const RoomReconnectedEvent());
+          notifyListeners();
+        } else {
+          logger.fine('full restart superseded while republishing, connectionState: ${engine.connectionState}');
         }
-        events.emit(const RoomReconnectedEvent());
-        notifyListeners();
       }
     })
     ..on<EngineResumingEvent>((event) async {
+      _connectionEpoch++;
       events.emit(const RoomResumingEvent());
       notifyListeners();
     })
@@ -627,6 +642,7 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       await _sendSyncState();
     })
     ..on<EngineAttemptReconnectEvent>((event) async {
+      _connectionEpoch++;
       events.emit(RoomAttemptReconnectEvent(
         attempt: event.attempt,
         maxAttemptsRetry: event.maxAttempts,
@@ -635,6 +651,7 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       notifyListeners();
     })
     ..on<EngineDisconnectedEvent>((event) async {
+      _connectionEpoch++;
       if (!engine.fullReconnectOnNext || event.reason == DisconnectReason.clientInitiated) {
         await _cleanUp(disposeLocalParticipant: false);
         events.emit(RoomDisconnectedEvent(reason: event.reason));

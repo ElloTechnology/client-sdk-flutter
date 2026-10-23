@@ -58,10 +58,17 @@ class E2EContainer {
   /// that value (used to exercise v1 vs v2 caller paths in self-loop tests).
   /// When [captureOutbound] is true, all DataPackets sent over the reliable
   /// data channel are recorded in [capturedDataPackets].
-  Future<void> connectRoom({int? localClientProtocol, bool captureOutbound = false}) async {
+  /// When [fastPublishCodecs] is non-null, the join response enables fast
+  /// publish with those codecs, so a publish adds its sender while the server
+  /// has yet to confirm the track.
+  Future<void> connectRoom({
+    int? localClientProtocol,
+    bool captureOutbound = false,
+    List<lk_models.Codec>? fastPublishCodecs,
+  }) async {
     final connectFuture = room.connect(exampleUri, token);
     Future.delayed(const Duration(milliseconds: 1), () {
-      final resp = _buildJoinResponse(localClientProtocol);
+      final resp = _withFastPublish(_buildJoinResponse(localClientProtocol), fastPublishCodecs);
       wsConnector.onData(resp.writeToBuffer());
       wsConnector.onData(offerResponse.writeToBuffer());
     });
@@ -114,6 +121,15 @@ class E2EContainer {
         serverInfo: lk_models.ServerInfo(version: '1.8.0'),
       ),
     );
+  }
+
+  lk_rtc.SignalResponse _withFastPublish(lk_rtc.SignalResponse response, List<lk_models.Codec>? codecs) {
+    if (codecs == null) {
+      return response;
+    }
+    return response.deepCopy()
+      ..join.fastPublish = true
+      ..join.enabledPublishCodecs.addAll(codecs);
   }
 
   void _installOutboundCapture() {

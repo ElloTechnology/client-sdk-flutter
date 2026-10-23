@@ -278,8 +278,14 @@ a=rtpmap:32 MPV/90000
   @override
   Future<void> removeStream(MediaStream stream) async {}
 
+  /// Every sender passed to [removeTrack], in call order.
+  final List<RTCRtpSender> removedSenders = [];
+
   @override
-  Future<bool> removeTrack(RTCRtpSender sender) async => true;
+  Future<bool> removeTrack(RTCRtpSender sender) async {
+    removedSenders.add(sender);
+    return true;
+  }
 
   @override
   Future<void> setConfiguration(Map<String, dynamic> configuration) {

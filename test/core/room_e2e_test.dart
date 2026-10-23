@@ -28,6 +28,7 @@ import 'package:livekit_client/src/internal/events.dart';
 import 'package:livekit_client/src/proto/livekit_models.pb.dart' as lk_models;
 import 'package:livekit_client/src/proto/livekit_rtc.pb.dart' as lk_rtc;
 import '../mock/e2e_container.dart';
+import '../mock/peerconnection_mock.dart';
 import '../mock/test_data.dart';
 import '../mock/websocket_mock.dart';
 import 'signal_client_test.dart';
@@ -303,8 +304,9 @@ void main() {
       };
     }
 
-    test('XP-5116: a full reconnect whose microphone republish times out still emits RoomReconnectedEvent', () async {
-      // The server never confirms the republish, as on a flaky reconnect.
+    // The server never confirms a republish, as on a flaky reconnect, so each
+    // one fails at this timeout.
+    void failUnconfirmedPublishesQuickly() {
       container.engine.connectOptions = const ConnectOptions(
         timeouts: Timeouts(
           connection: Duration(seconds: 10),
@@ -315,6 +317,42 @@ void main() {
           iceRestart: Duration(seconds: 10),
         ),
       );
+    }
+
+    // Completes once the SDK has sent its first AddTrackRequest, while the
+    // publish is waiting on the server.
+    Future<void> addTrackSent() {
+      final sent = Completer<void>();
+      ws.onSend = (data) {
+        if (!sent.isCompleted && lk_rtc.SignalRequest.fromBuffer(data).hasAddTrack()) sent.complete();
+      };
+      return sent.future;
+    }
+
+    // Collects the records rePublishAllTracks logs for a failed track, and
+    // completes [first] with the first of them.
+    ({List<LogRecord> records, Future<void> first}) republishFailureLogs() {
+      final records = <LogRecord>[];
+      final first = Completer<void>();
+      final logs = Logger.root.onRecord.where((record) => record.message.startsWith('reconnect republish')).listen(
+        (record) {
+          records.add(record);
+          if (!first.isCompleted) first.complete();
+        },
+      );
+      addTearDown(logs.cancel);
+      return (records: records, first: first.future);
+    }
+
+    List<RoomReconnectedEvent> collectReconnected() {
+      final reconnected = <RoomReconnectedEvent>[];
+      final cancel = room.events.on<RoomReconnectedEvent>(reconnected.add);
+      addTearDown(cancel);
+      return reconnected;
+    }
+
+    test('XP-5116: a full reconnect whose microphone republish times out still emits RoomReconnectedEvent', () async {
+      failUnconfirmedPublishesQuickly();
       final track = await addActiveAudioPublication('microphone');
       final severe = <LogRecord>[];
       final logs = Logger.root.onRecord.where((record) => record.level >= Level.SEVERE).listen(severe.add);
@@ -348,6 +386,78 @@ void main() {
       final participant = room.localParticipant!;
       expect(participant.getTrackPublicationBySource(TrackSource.microphone), isNull);
       expect(participant.getTrackPublicationBySource(TrackSource.screenShareAudio)?.sid, 'healthy-track-republished');
+    });
+
+    // XP-5116 review: the restart handler is not serialized, so a newer restart
+    // can begin during the publish timeout. The first restart's completion then
+    // announced a reconnect while the engine was reconnecting again.
+    test(
+        'XP-5116: a full restart that begins during the republish supersedes the first restart\'s RoomReconnectedEvent',
+        () async {
+      failUnconfirmedPublishesQuickly();
+      await addActiveAudioPublication('microphone');
+      final pending = addTrackSent();
+      final failures = republishFailureLogs();
+      final reconnected = collectReconnected();
+
+      container.engine.events.emit(const EngineRestartedEvent());
+      await pending;
+      container.engine.events.emit(const EngineFullRestartingEvent());
+      await failures.first;
+      await pumpEventQueue();
+
+      expect(reconnected, isEmpty, reason: 'the newer restart announces its own reconnect');
+    });
+
+    // XP-5116 review: a republish that fails because the connection dropped
+    // under it is not a server that refused the track, and must not land in
+    // the severe republish-failure family.
+    test('XP-5116: a signal connection lost during the republish is logged at warning and announces no reconnect',
+        () async {
+      failUnconfirmedPublishesQuickly();
+      await addActiveAudioPublication('microphone');
+      final pending = addTrackSent();
+      final failures = republishFailureLogs();
+      final reconnected = collectReconnected();
+
+      container.engine.events.emit(const EngineRestartedEvent());
+      await pending;
+      await container.client.cleanUp();
+      await failures.first;
+      await pumpEventQueue();
+
+      expect(
+        failures.records.map((record) => (record.level, record.message)),
+        [
+          (
+            Level.WARNING,
+            'reconnect republish abandoned for microphone track, connectionState: ConnectionState.disconnected'
+          )
+        ],
+      );
+      expect(reconnected, isEmpty, reason: 'a lost connection reconnects or disconnects on its own');
+    });
+
+    // XP-5116 review: with fast publish the sender is added alongside the
+    // AddTrackRequest, so a timed-out publish left it on the publisher
+    // connection where a late server confirmation could publish it as a
+    // second, silent microphone.
+    test('XP-5116: a republish that times out after adding its sender removes that sender', () async {
+      await container.dispose();
+      resetMockDataChannels();
+      container = E2EContainer();
+      room = container.room;
+      ws = container.wsConnector;
+      await container.connectRoom(fastPublishCodecs: [lk_models.Codec(mime: 'audio/opus')]);
+      failUnconfirmedPublishesQuickly();
+      final track = await addActiveAudioPublication('microphone');
+
+      await room.localParticipant!.rePublishAllTracks();
+
+      final sender = track.transceiver?.sender;
+      expect(sender, isNotNull, reason: 'fast publish adds the sender before the server confirms');
+      final publisher = container.engine.publisher!.pc as MockPeerConnection;
+      expect(publisher.removedSenders, [sender]);
     });
   });
 
