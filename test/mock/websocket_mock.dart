@@ -34,6 +34,10 @@ class MockWebSocketConnector {
   /// Receives every request the SDK sends over the signal connection.
   void Function(List<int> data)? onSend;
 
+  /// Called each time the SDK opens a signal connection, once [onData] can
+  /// deliver to it.
+  void Function()? onConnect;
+
   WebSocketOnData get onData => handlers!.onData!;
 
   WebSocketOnDispose get onDispose => handlers!.onDispose!;
@@ -56,6 +60,7 @@ class MockWebSocketConnector {
     }
 
     handlers = options;
+    onConnect?.call();
     return MockWebSocket(onSend: (data) => onSend?.call(data));
   }
 }

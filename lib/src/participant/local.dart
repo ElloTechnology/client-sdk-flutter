@@ -202,25 +202,32 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
         return lk_models.TrackInfo();
       }
 
+      final publisher = room.engine.publisher;
+      final previousTransceiver = track.transceiver;
       late lk_models.TrackInfo trackInfo;
-      if (room.engine.enabledPublishCodecs?.isNotEmpty ?? false) {
-        final rets = await Future.wait<lk_models.TrackInfo>([room.engine.addTrack(req), negotiate(publishOptions)]);
-        trackInfo = rets[0];
-      } else {
-        trackInfo = await room.engine.addTrack(req);
+      try {
+        if (room.engine.enabledPublishCodecs?.isNotEmpty ?? false) {
+          final rets = await Future.wait<lk_models.TrackInfo>([room.engine.addTrack(req), negotiate(publishOptions)]);
+          trackInfo = rets[0];
+        } else {
+          trackInfo = await room.engine.addTrack(req);
 
-        final transceiverInit = rtc.RTCRtpTransceiverInit(
-          direction: rtc.TransceiverDirection.SendOnly,
-          sendEncodings: encodings,
-        );
-        // addTransceiver cannot pass in a kind parameter due to a bug in flutter-webrtc (web)
-        track.transceiver = await room.engine.publisher?.pc.addTransceiver(
-          track: track.mediaStreamTrack,
-          kind: rtc.RTCRtpMediaType.RTCRtpMediaTypeAudio,
-          init: transceiverInit,
-        );
+          final transceiverInit = rtc.RTCRtpTransceiverInit(
+            direction: rtc.TransceiverDirection.SendOnly,
+            sendEncodings: encodings,
+          );
+          // addTransceiver cannot pass in a kind parameter due to a bug in flutter-webrtc (web)
+          track.transceiver = await room.engine.publisher?.pc.addTransceiver(
+            track: track.mediaStreamTrack,
+            kind: rtc.RTCRtpMediaType.RTCRtpMediaTypeAudio,
+            init: transceiverInit,
+          );
 
-        await room.engine.negotiate();
+          await room.engine.negotiate();
+        }
+      } catch (_) {
+        await _removeUnconfirmedSender(track, previousTransceiver, publisher);
+        rethrow;
       }
 
       logger.fine('publishAudioTrack engine.addTrack response: ${trackInfo}');
@@ -436,76 +443,84 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
         ..clear()
         ..addAll(layers);
     }
+    final publisher = room.engine.publisher;
+    final previousTransceiver = track.transceiver;
     late lk_models.TrackInfo trackInfo;
-    if (room.engine.enabledPublishCodecs?.isNotEmpty ?? false) {
-      final rets = await Future.wait<lk_models.TrackInfo>([room.engine.addTrack(req), negotiate(publishOptions)]);
-      trackInfo = rets[0];
-    } else {
-      trackInfo = await room.engine.addTrack(req);
+    try {
+      if (room.engine.enabledPublishCodecs?.isNotEmpty ?? false) {
+        final rets = await Future.wait<lk_models.TrackInfo>([room.engine.addTrack(req), negotiate(publishOptions)]);
+        trackInfo = rets[0];
+      } else {
+        trackInfo = await room.engine.addTrack(req);
 
-      String? primaryCodecMime;
-      for (var codec in trackInfo.codecs) {
-        primaryCodecMime ??= codec.mimeType;
-      }
+        String? primaryCodecMime;
+        for (var codec in trackInfo.codecs) {
+          primaryCodecMime ??= codec.mimeType;
+        }
 
-      if (primaryCodecMime != null) {
-        final updatedCodec = mimeTypeToVideoCodecString(primaryCodecMime);
-        if (updatedCodec != publishOptions.videoCodec) {
-          logger.fine(
-            'requested a different codec than specified by serverRequested: ${publishOptions.videoCodec}, server: ${updatedCodec}',
-          );
-          publishOptions = publishOptions.copyWith(
-            videoCodec: updatedCodec,
-          );
-          // recompute encodings since bitrates/etc could have changed
-          encodings = Utils.computeVideoEncodings(
-            isScreenShare: track.source == TrackSource.screenShareVideo,
-            dimensions: dimensions,
-            options: publishOptions,
-            codec: publishOptions.videoCodec,
+        if (primaryCodecMime != null) {
+          final updatedCodec = mimeTypeToVideoCodecString(primaryCodecMime);
+          if (updatedCodec != publishOptions.videoCodec) {
+            logger.fine(
+              'requested a different codec than specified by serverRequested: ${publishOptions.videoCodec}, server: ${updatedCodec}',
+            );
+            publishOptions = publishOptions.copyWith(
+              videoCodec: updatedCodec,
+            );
+            // recompute encodings since bitrates/etc could have changed
+            encodings = Utils.computeVideoEncodings(
+              isScreenShare: track.source == TrackSource.screenShareVideo,
+              dimensions: dimensions,
+              options: publishOptions,
+              codec: publishOptions.videoCodec,
+            );
+          }
+        }
+
+        final transceiverInit = rtc.RTCRtpTransceiverInit(
+          direction: rtc.TransceiverDirection.SendOnly,
+          sendEncodings: encodings,
+        );
+
+        logger.fine('publishVideoTrack publisher: ${room.engine.publisher}');
+
+        track.transceiver = await room.engine.publisher?.pc.addTransceiver(
+          track: track.mediaStreamTrack,
+          kind: rtc.RTCRtpMediaType.RTCRtpMediaTypeVideo,
+          init: transceiverInit,
+        );
+
+        track.codec = publishOptions.videoCodec;
+        if (lkBrowser() != BrowserType.firefox) {
+          await room.engine.setPreferredCodec(
+            track.transceiver!,
+            'video',
+            publishOptions.videoCodec,
           );
         }
+
+        if ([TrackSource.camera, TrackSource.screenShareVideo].contains(track.source)) {
+          final degradationPreference =
+              publishOptions.degradationPreference ?? DegradationPreference.maintainResolution;
+          await track.setDegradationPreference(degradationPreference);
+        }
+
+        if (kIsWeb && lkBrowser() == BrowserType.firefox && track.kind == TrackType.AUDIO) {
+          //TOOD:
+        } else if (isVideoCodec(publishOptions.videoCodec) && encodings?.first.maxBitrate != null) {
+          // Apply start bitrate for all video codecs to prevent initial blurriness
+          room.engine.publisher?.setTrackBitrateInfo(TrackBitrateInfo(
+              cid: track.getCid(),
+              transceiver: track.transceiver,
+              codec: publishOptions.videoCodec,
+              maxbr: encodings![0].maxBitrate! ~/ 1000));
+        }
+
+        await room.engine.negotiate();
       }
-
-      final transceiverInit = rtc.RTCRtpTransceiverInit(
-        direction: rtc.TransceiverDirection.SendOnly,
-        sendEncodings: encodings,
-      );
-
-      logger.fine('publishVideoTrack publisher: ${room.engine.publisher}');
-
-      track.transceiver = await room.engine.publisher?.pc.addTransceiver(
-        track: track.mediaStreamTrack,
-        kind: rtc.RTCRtpMediaType.RTCRtpMediaTypeVideo,
-        init: transceiverInit,
-      );
-
-      track.codec = publishOptions.videoCodec;
-      if (lkBrowser() != BrowserType.firefox) {
-        await room.engine.setPreferredCodec(
-          track.transceiver!,
-          'video',
-          publishOptions.videoCodec,
-        );
-      }
-
-      if ([TrackSource.camera, TrackSource.screenShareVideo].contains(track.source)) {
-        final degradationPreference = publishOptions.degradationPreference ?? DegradationPreference.maintainResolution;
-        await track.setDegradationPreference(degradationPreference);
-      }
-
-      if (kIsWeb && lkBrowser() == BrowserType.firefox && track.kind == TrackType.AUDIO) {
-        //TOOD:
-      } else if (isVideoCodec(publishOptions.videoCodec) && encodings?.first.maxBitrate != null) {
-        // Apply start bitrate for all video codecs to prevent initial blurriness
-        room.engine.publisher?.setTrackBitrateInfo(TrackBitrateInfo(
-            cid: track.getCid(),
-            transceiver: track.transceiver,
-            codec: publishOptions.videoCodec,
-            maxbr: encodings![0].maxBitrate! ~/ 1000));
-      }
-
-      await room.engine.negotiate();
+    } catch (_) {
+      await _removeUnconfirmedSender(track, previousTransceiver, publisher);
+      rethrow;
     }
 
     logger.fine('publishVideoTrack engine.addTrack response: ${trackInfo}');
@@ -608,15 +623,16 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
   /// its caller must still announce it. A dropped track has no publication
   /// afterwards, so `setSourceEnabled` publishes fresh capture for its source.
   ///
-  /// A failure on a connected engine is logged at severe. Once the engine has
-  /// closed or left the connected state the failure follows from that, not
-  /// from the server, and is logged at warning.
+  /// A failure on the connection the republish started on, while it is still
+  /// connected, is logged at severe. Once the engine has closed, left the
+  /// connected state, or begun another reconnect, the failure follows from
+  /// that, not from the server, and is logged at warning.
   Future<void> rePublishAllTracks() async {
+    final epoch = room.connectionEpoch;
     final publications = trackPublications.values.toList();
     trackPublications.clear();
     for (final publication in publications) {
       final track = publication.track;
-      final previousTransceiver = track?.transceiver;
       try {
         if (publication.muted || track?.muted == true) {
           // stopOnMute disposes native capture while retaining the publication.
@@ -630,18 +646,16 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
         }
       } on Exception catch (error, stackTrace) {
         final engine = room.engine;
-        if (engine.isClosed || engine.connectionState != ConnectionState.connected) {
+        final superseded = room.connectionEpoch != epoch;
+        if (superseded || engine.isClosed || engine.connectionState != ConnectionState.connected) {
           logger.warning(
             'reconnect republish abandoned for ${publication.source.name} track, '
-            'connectionState: ${engine.connectionState}',
+            'connectionState: ${engine.connectionState}, superseded: $superseded',
             error,
             stackTrace,
           );
         } else {
           logger.severe('reconnect republish failed for ${publication.source.name} track', error, stackTrace);
-        }
-        if (track != null) {
-          await _removeUnconfirmedSender(track, previousTransceiver);
         }
         // Nothing owns the track once its publication is gone, so its capture
         // would keep running unseen.
@@ -654,28 +668,38 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
     }
   }
 
-  /// Removes the sender a failed republish added to the publisher connection.
+  /// Removes the sender a failed publish added to [publisher], the publisher
+  /// connection the publish started on.
   ///
   /// A publish can add its sender before the server confirms the track. Left in
   /// place, the server can still publish it when the confirmation arrives
   /// late: a second track for the source that carries nothing, beside the
-  /// fresh capture that replaces it. A sender the track kept from before the
-  /// reconnect belongs to the closed connection and is left alone.
-  Future<void> _removeUnconfirmedSender(LocalTrack track, rtc.RTCRtpTransceiver? previousTransceiver) async {
+  /// capture published after it. A sender the track already had before the
+  /// publish belongs to an earlier connection and is left alone. So is every
+  /// sender once a reconnect has replaced [publisher]: that connection is
+  /// closed, and the current one never carried the sender.
+  Future<void> _removeUnconfirmedSender(
+    LocalTrack track,
+    rtc.RTCRtpTransceiver? previousTransceiver,
+    Transport? publisher,
+  ) async {
     final transceiver = track.transceiver;
-    if (transceiver == null || identical(transceiver, previousTransceiver)) {
+    if (transceiver == null ||
+        identical(transceiver, previousTransceiver) ||
+        publisher == null ||
+        !identical(publisher, room.engine.publisher)) {
       return;
     }
     try {
       // Backup-codec senders are only added for a confirmed publication, so the
       // primary sender is the only one a failed publish can leave behind.
-      await room.engine.publisher?.pc.removeTrack(transceiver.sender);
+      await publisher.pc.removeTrack(transceiver.sender);
       if (!isDisposed) {
         // manual negotiation since track changed
         await room.engine.negotiate();
       }
     } catch (error) {
-      logger.warning('failed to remove sender after republish failure: $error');
+      logger.warning('failed to remove sender after publish failure: $error');
     }
   }
 

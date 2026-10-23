@@ -86,6 +86,19 @@ class E2EContainer {
     }
   }
 
+  /// Answers the join of the next signal connection the engine opens, as the
+  /// server does when a full restart reconnects. [fastPublishCodecs] works as
+  /// in [connectRoom].
+  void answerNextJoin({List<lk_models.Codec>? fastPublishCodecs}) {
+    wsConnector.onConnect = () {
+      wsConnector.onConnect = null;
+      Future.delayed(const Duration(milliseconds: 1), () {
+        wsConnector.onData(_withFastPublish(joinResponse, fastPublishCodecs).writeToBuffer());
+        wsConnector.onData(offerResponse.writeToBuffer());
+      });
+    };
+  }
+
   void _installSfuIdentityShim() {
     final localIdentity = room.localParticipant?.identity ?? '';
     if (localIdentity.isEmpty) return;

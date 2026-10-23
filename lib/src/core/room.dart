@@ -148,6 +148,12 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   // only announces the reconnect while nothing has replaced that connection.
   int _connectionEpoch = 0;
 
+  /// Advances whenever the engine starts another reconnect or disconnects, so
+  /// work begun on one connection can tell whether that connection still
+  /// stands.
+  @internal
+  int get connectionEpoch => _connectionEpoch;
+
   lk_models.Room? _roomInfo;
 
   /// a list of participants that are actively speaking, including local participant.

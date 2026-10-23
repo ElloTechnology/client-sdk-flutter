@@ -27,6 +27,7 @@ import 'package:livekit_client/src/extensions.dart';
 import 'package:livekit_client/src/internal/events.dart';
 import 'package:livekit_client/src/proto/livekit_models.pb.dart' as lk_models;
 import 'package:livekit_client/src/proto/livekit_rtc.pb.dart' as lk_rtc;
+import 'package:livekit_client/src/types/internal.dart';
 import '../mock/e2e_container.dart';
 import '../mock/peerconnection_mock.dart';
 import '../mock/test_data.dart';
@@ -305,18 +306,40 @@ void main() {
     }
 
     // The server never confirms a republish, as on a flaky reconnect, so each
-    // one fails at this timeout.
-    void failUnconfirmedPublishesQuickly() {
-      container.engine.connectOptions = const ConnectOptions(
+    // one fails at [publish].
+    void failUnconfirmedPublishesQuickly({Duration publish = const Duration(milliseconds: 50)}) {
+      container.engine.connectOptions = ConnectOptions(
         timeouts: Timeouts(
-          connection: Duration(seconds: 10),
-          debounce: Duration(milliseconds: 20),
-          publish: Duration(milliseconds: 50),
-          subscribe: Duration(seconds: 10),
-          peerConnection: Duration(seconds: 10),
-          iceRestart: Duration(seconds: 10),
+          connection: const Duration(seconds: 10),
+          debounce: const Duration(milliseconds: 20),
+          publish: publish,
+          subscribe: const Duration(seconds: 10),
+          peerConnection: const Duration(seconds: 10),
+          iceRestart: const Duration(seconds: 10),
         ),
       );
+    }
+
+    // Replaces the room with one whose server enables fast publish, so a
+    // publish adds its sender before the server confirms the track.
+    Future<void> reconnectWithFastPublish() async {
+      await container.dispose();
+      resetMockDataChannels();
+      container = E2EContainer();
+      room = container.room;
+      ws = container.wsConnector;
+      await container.connectRoom(fastPublishCodecs: [lk_models.Codec(mime: 'audio/opus')]);
+    }
+
+    // Drives a full restart through the engine, as a lost connection does:
+    // handleReconnect schedules attemptReconnect, which restarts the
+    // connection and joins again.
+    Future<void> reconnectFully({List<lk_models.Codec>? fastPublishCodecs}) async {
+      container.answerNextJoin(fastPublishCodecs: fastPublishCodecs);
+      final restarted = container.engine.events.waitFor<EngineRestartedEvent>(duration: const Duration(seconds: 2));
+      container.engine.fullReconnectOnNext = true;
+      await container.engine.handleReconnect(ClientDisconnectReason.reconnectRetry);
+      await restarted;
     }
 
     // Completes once the SDK has sent its first AddTrackRequest, while the
@@ -431,7 +454,8 @@ void main() {
         [
           (
             Level.WARNING,
-            'reconnect republish abandoned for microphone track, connectionState: ConnectionState.disconnected'
+            'reconnect republish abandoned for microphone track, '
+                'connectionState: ConnectionState.disconnected, superseded: false'
           )
         ],
       );
@@ -443,12 +467,7 @@ void main() {
     // connection where a late server confirmation could publish it as a
     // second, silent microphone.
     test('XP-5116: a republish that times out after adding its sender removes that sender', () async {
-      await container.dispose();
-      resetMockDataChannels();
-      container = E2EContainer();
-      room = container.room;
-      ws = container.wsConnector;
-      await container.connectRoom(fastPublishCodecs: [lk_models.Codec(mime: 'audio/opus')]);
+      await reconnectWithFastPublish();
       failUnconfirmedPublishesQuickly();
       final track = await addActiveAudioPublication('microphone');
 
@@ -458,6 +477,97 @@ void main() {
       expect(sender, isNotNull, reason: 'fast publish adds the sender before the server confirms');
       final publisher = container.engine.publisher!.pc as MockPeerConnection;
       expect(publisher.removedSenders, [sender]);
+    });
+
+    // XP-5116 review: the app's mic repair enables the microphone through
+    // setMicrophoneEnabled, which publishes outside rePublishAllTracks. A
+    // timed-out attempt left its sender behind, and the retry published a
+    // second track beside it.
+    test('XP-5116: a publish that times out after adding its sender removes that sender', () async {
+      await reconnectWithFastPublish();
+      failUnconfirmedPublishesQuickly();
+      final mediaStream = _FakeMediaStream('microphone-stream');
+      final mediaTrack = _FakeMediaStreamTrack(id: 'microphone-track', kind: 'audio');
+      await mediaStream.addTrack(mediaTrack);
+      final track = LocalAudioTrack(TrackSource.microphone, mediaStream, mediaTrack, const AudioCaptureOptions());
+
+      await expectLater(room.localParticipant!.publishAudioTrack(track), throwsA(isA<TrackPublishException>()));
+
+      final sender = track.transceiver?.sender;
+      expect(sender, isNotNull, reason: 'fast publish adds the sender before the server confirms');
+      final publisher = container.engine.publisher!.pc as MockPeerConnection;
+      expect(publisher.removedSenders, [sender]);
+    });
+
+    test('XP-5116: a republish that times out before adding a sender leaves the track\'s earlier sender alone',
+        () async {
+      failUnconfirmedPublishesQuickly();
+      final track = await addActiveAudioPublication('microphone');
+      // The sender the track carried on the connection before the reconnect.
+      final earlierTransceiver = MockRtpTransceiver();
+      track.transceiver = earlierTransceiver;
+
+      await room.localParticipant!.rePublishAllTracks();
+
+      expect(track.transceiver, same(earlierTransceiver), reason: 'without fast publish no sender is added');
+      final publisher = container.engine.publisher!.pc as MockPeerConnection;
+      expect(publisher.removedSenders, isEmpty);
+    });
+
+    // XP-5116 review: the epoch guard must not drop the reconnect of a restart
+    // nothing superseded.
+    test('XP-5116: a full reconnect through the engine republishes the microphone and emits RoomReconnectedEvent',
+        () async {
+      await addActiveAudioPublication('microphone');
+      confirmPublishOf('microphone-track', TrackSource.microphone);
+      final reconnected = room.events.waitFor<RoomReconnectedEvent>(duration: const Duration(seconds: 2));
+
+      await reconnectFully();
+
+      await reconnected;
+      expect(
+        room.localParticipant!.getTrackPublicationBySource(TrackSource.microphone)?.sid,
+        'microphone-track-republished',
+      );
+    });
+
+    // XP-5116 review: a second restart can finish while the first restart's
+    // republish waits out its publish timeout. The engine reads connected
+    // again by then, so the failure was logged at severe, and the cleanup
+    // removed the first connection's sender from the second connection.
+    test(
+        'XP-5116: a republish a completed newer restart superseded logs at warning and leaves the new connection alone',
+        () async {
+      final codecs = [lk_models.Codec(mime: 'audio/opus')];
+      await reconnectWithFastPublish();
+      failUnconfirmedPublishesQuickly(publish: const Duration(milliseconds: 500));
+      final track = await addActiveAudioPublication('microphone');
+      final pending = addTrackSent();
+      final failures = republishFailureLogs();
+
+      await reconnectFully(fastPublishCodecs: codecs);
+      await pending;
+      final firstPublisher = container.engine.publisher!.pc as MockPeerConnection;
+      await reconnectFully(fastPublishCodecs: codecs);
+      final secondPublisher = container.engine.publisher!.pc as MockPeerConnection;
+      expect(secondPublisher, isNot(same(firstPublisher)));
+      expect(failures.records, isEmpty, reason: 'the second restart must complete inside the publish timeout');
+      await failures.first;
+      await pumpEventQueue();
+
+      expect(track.transceiver, isNotNull, reason: 'fast publish adds the sender on the first restart\'s connection');
+      expect(
+        failures.records.map((record) => (record.level, record.message)),
+        [
+          (
+            Level.WARNING,
+            'reconnect republish abandoned for microphone track, '
+                'connectionState: ConnectionState.connected, superseded: true'
+          )
+        ],
+      );
+      expect(secondPublisher.removedSenders, isEmpty);
+      expect(firstPublisher.removedSenders, isEmpty, reason: 'the first connection is closed');
     });
   });
 
