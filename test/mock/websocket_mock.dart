@@ -16,8 +16,12 @@ import 'package:livekit_client/src/options.dart';
 import 'package:livekit_client/src/support/websocket.dart';
 
 class MockWebSocket extends LiveKitWebSocket {
+  final void Function(List<int> data)? onSend;
+
+  MockWebSocket({this.onSend});
+
   @override
-  void send(List<int> data) {}
+  void send(List<int> data) => onSend?.call(data);
 }
 
 class MockWebSocketConnector {
@@ -26,6 +30,9 @@ class MockWebSocketConnector {
   Map<String, String>? headers;
   NetworkOptions? networkOptions;
   Object? connectError;
+
+  /// Receives every request the SDK sends over the signal connection.
+  void Function(List<int> data)? onSend;
 
   WebSocketOnData get onData => handlers!.onData!;
 
@@ -49,6 +56,6 @@ class MockWebSocketConnector {
     }
 
     handlers = options;
-    return MockWebSocket();
+    return MockWebSocket(onSend: (data) => onSend?.call(data));
   }
 }

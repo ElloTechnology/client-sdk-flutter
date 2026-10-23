@@ -601,18 +601,23 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       notifyListeners();
     })
     ..on<EngineRestartedEvent>((event) async {
-      // re-publish all tracks
-      await localParticipant?.rePublishAllTracks();
-
-      for (var participant in _remoteParticipants.toList()) {
-        for (var pub in participant.trackPublications.values.toList()) {
-          if (pub.subscribed) {
-            pub.sendUpdateTrackSettings();
+      try {
+        // re-publish all tracks
+        await localParticipant?.rePublishAllTracks();
+      } finally {
+        // The engine has reconnected whether or not every track came back, and
+        // listeners need the reconnected event to leave their reconnecting
+        // state and repair what is missing.
+        for (var participant in _remoteParticipants.toList()) {
+          for (var pub in participant.trackPublications.values.toList()) {
+            if (pub.subscribed) {
+              pub.sendUpdateTrackSettings();
+            }
           }
         }
+        events.emit(const RoomReconnectedEvent());
+        notifyListeners();
       }
-      events.emit(const RoomReconnectedEvent());
-      notifyListeners();
     })
     ..on<EngineResumingEvent>((event) async {
       events.emit(const RoomResumingEvent());

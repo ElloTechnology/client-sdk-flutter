@@ -168,9 +168,8 @@ class MockPeerConnection extends RTCPeerConnection {
 
   @override
   Future<RTCRtpTransceiver> addTransceiver(
-      {MediaStreamTrack? track, RTCRtpMediaType? kind, RTCRtpTransceiverInit? init}) {
-    // TODO: implement addTransceiver
-    throw UnimplementedError();
+      {MediaStreamTrack? track, RTCRtpMediaType? kind, RTCRtpTransceiverInit? init}) async {
+    return MockRtpTransceiver();
   }
 
   @override
@@ -295,4 +294,20 @@ a=rtpmap:32 MPV/90000
   @override
   // TODO: implement restartIce
   Future<void> restartIce() => throw UnimplementedError();
+}
+
+/// A transceiver that accepts a published local track. Members a test does not
+/// exercise stay unimplemented.
+class MockRtpTransceiver implements RTCRtpTransceiver {
+  @override
+  final RTCRtpSender sender = MockRtpSender();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('MockRtpTransceiver.${invocation.memberName}');
+}
+
+class MockRtpSender implements RTCRtpSender {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError('MockRtpSender.${invocation.memberName}');
 }

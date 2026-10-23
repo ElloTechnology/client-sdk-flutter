@@ -600,20 +600,38 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
     }
   }
 
+  /// Republishes every track after a full reconnect.
+  ///
+  /// Each track is republished on its own: a track the server does not confirm
+  /// is logged and dropped, and the remaining tracks are still republished.
+  /// Failures are not rethrown, because the reconnect itself has completed and
+  /// its caller must still announce it. A dropped track has no publication
+  /// afterwards, so `setSourceEnabled` publishes fresh capture for its source.
   Future<void> rePublishAllTracks() async {
     final publications = trackPublications.values.toList();
     trackPublications.clear();
     for (final publication in publications) {
       final track = publication.track;
-      if (publication.muted || track?.muted == true) {
-        // stopOnMute disposes native capture while retaining the publication.
-        // Keep muted sources cold through reconnect; setSourceEnabled recreates
-        // and publishes capture when the source is enabled again.
-        await publication.dispose();
-      } else if (track is LocalAudioTrack) {
-        await publishAudioTrack(track);
-      } else if (track is LocalVideoTrack) {
-        await publishVideoTrack(track);
+      try {
+        if (publication.muted || track?.muted == true) {
+          // stopOnMute disposes native capture while retaining the publication.
+          // Keep muted sources cold through reconnect; setSourceEnabled recreates
+          // and publishes capture when the source is enabled again.
+          await publication.dispose();
+        } else if (track is LocalAudioTrack) {
+          await publishAudioTrack(track);
+        } else if (track is LocalVideoTrack) {
+          await publishVideoTrack(track);
+        }
+      } on Exception catch (error, stackTrace) {
+        logger.severe('reconnect republish failed for ${publication.source.name} track', error, stackTrace);
+        // Nothing owns the track once its publication is gone, so its capture
+        // would keep running unseen.
+        try {
+          await publication.dispose();
+        } catch (disposeError) {
+          logger.warning('failed to dispose track after republish failure: $disposeError');
+        }
       }
     }
   }

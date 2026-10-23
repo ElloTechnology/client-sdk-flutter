@@ -1,0 +1,1 @@
+patch type="fixed" "Emit RoomReconnectedEvent when a track fails to republish after a full reconnect"

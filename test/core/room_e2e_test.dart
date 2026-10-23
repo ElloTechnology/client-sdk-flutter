@@ -15,6 +15,7 @@
 @Timeout(Duration(seconds: 5))
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +23,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:logging/logging.dart';
 
 import 'package:livekit_client/livekit_client.dart';
+import 'package:livekit_client/src/extensions.dart';
 import 'package:livekit_client/src/internal/events.dart';
 import 'package:livekit_client/src/proto/livekit_models.pb.dart' as lk_models;
 import 'package:livekit_client/src/proto/livekit_rtc.pb.dart' as lk_rtc;
@@ -257,6 +259,98 @@ void main() {
     });
   });
 
+  group('reconnect republish', () {
+    Future<LocalAudioTrack> addActiveAudioPublication(
+      String id, {
+      TrackSource source = TrackSource.microphone,
+      LocalAudioTrack Function(rtc.MediaStream, rtc.MediaStreamTrack)? createTrack,
+    }) async {
+      final participant = room.localParticipant!;
+      final mediaStream = _FakeMediaStream('$id-stream');
+      final mediaTrack = _FakeMediaStreamTrack(id: '$id-track', kind: 'audio');
+      await mediaStream.addTrack(mediaTrack);
+      final track = createTrack?.call(mediaStream, mediaTrack) ??
+          LocalAudioTrack(source, mediaStream, mediaTrack, const AudioCaptureOptions());
+      participant.addTrackPublication(LocalTrackPublication<LocalAudioTrack>(
+        participant: participant,
+        info: lk_models.TrackInfo(
+          sid: '$id-publication',
+          type: lk_models.TrackType.AUDIO,
+          source: source.toPBType(),
+        ),
+        track: track,
+      ));
+      await track.start();
+      return track;
+    }
+
+    // Confirms every AddTrackRequest for [cid] once the SDK has sent it, so the
+    // confirmation cannot arrive before the SDK is waiting for it.
+    void confirmPublishOf(String cid, TrackSource source) {
+      ws.onSend = (data) {
+        final request = lk_rtc.SignalRequest.fromBuffer(data);
+        if (!request.hasAddTrack() || request.addTrack.cid != cid) return;
+        scheduleMicrotask(() => ws.onData(lk_rtc.SignalResponse(
+              trackPublished: lk_rtc.TrackPublishedResponse(
+                cid: cid,
+                track: lk_models.TrackInfo(
+                  sid: '$cid-republished',
+                  type: lk_models.TrackType.AUDIO,
+                  source: source.toPBType(),
+                ),
+              ),
+            ).writeToBuffer()));
+      };
+    }
+
+    test('XP-5116: a full reconnect whose microphone republish times out still emits RoomReconnectedEvent', () async {
+      // The server never confirms the republish, as on a flaky reconnect.
+      container.engine.connectOptions = const ConnectOptions(
+        timeouts: Timeouts(
+          connection: Duration(seconds: 10),
+          debounce: Duration(milliseconds: 20),
+          publish: Duration(milliseconds: 50),
+          subscribe: Duration(seconds: 10),
+          peerConnection: Duration(seconds: 10),
+          iceRestart: Duration(seconds: 10),
+        ),
+      );
+      final track = await addActiveAudioPublication('microphone');
+      final severe = <LogRecord>[];
+      final logs = Logger.root.onRecord.where((record) => record.level >= Level.SEVERE).listen(severe.add);
+      addTearDown(logs.cancel);
+
+      final reconnected = room.events.waitFor<RoomReconnectedEvent>(duration: const Duration(seconds: 2));
+      container.engine.events.emit(const EngineRestartedEvent());
+
+      // CRITICAL: the TrackPublishException used to escape the restart handler
+      // to the root zone, and RoomReconnectedEvent never fired, leaving the app
+      // in its reconnecting state with no microphone.
+      await reconnected;
+      expect(room.localParticipant!.getTrackPublicationBySource(TrackSource.microphone), isNull);
+      expect(track.isActive, isFalse, reason: 'the unpublished track must not keep capturing');
+      expect(
+        severe.map((record) => (record.message, record.error.runtimeType)),
+        contains(('reconnect republish failed for microphone track', TrackPublishException)),
+      );
+    });
+
+    test('XP-5116: one failed republish does not skip the tracks after it', () async {
+      await addActiveAudioPublication(
+        'failing',
+        createTrack: (stream, mediaTrack) => _FailingRepublishAudioTrack(stream, mediaTrack),
+      );
+      await addActiveAudioPublication('healthy', source: TrackSource.screenShareAudio);
+      confirmPublishOf('healthy-track', TrackSource.screenShareAudio);
+
+      await room.localParticipant!.rePublishAllTracks();
+
+      final participant = room.localParticipant!;
+      expect(participant.getTrackPublicationBySource(TrackSource.microphone), isNull);
+      expect(participant.getTrackPublicationBySource(TrackSource.screenShareAudio)?.sid, 'healthy-track-republished');
+    });
+  });
+
   group('publish guards', () {
     test('concurrent setSourceEnabled serializes calls', () async {
       final lp = room.localParticipant!;
@@ -436,4 +530,20 @@ class _FakeMediaStreamTrack implements rtc.MediaStreamTrack {
 
   @override
   String toString() => 'FakeMediaStreamTrack(id: $id, kind: $kind, enabled: $enabled)';
+}
+
+/// An active microphone whose capture cannot be restarted, so republishing it
+/// fails before anything is signalled.
+class _FailingRepublishAudioTrack extends LocalAudioTrack {
+  _FailingRepublishAudioTrack(rtc.MediaStream stream, rtc.MediaStreamTrack mediaTrack)
+      : super(TrackSource.microphone, stream, mediaTrack, const AudioCaptureOptions());
+
+  bool _started = false;
+
+  @override
+  Future<bool> start() async {
+    if (_started) throw TrackCreateException('capture could not restart');
+    _started = true;
+    return super.start();
+  }
 }
