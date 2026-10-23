@@ -657,10 +657,10 @@ class LocalParticipant extends Participant<LocalTrackPublication> {
   /// Removes the sender a failed republish added to the publisher connection.
   ///
   /// A publish can add its sender before the server confirms the track. Left in
-  /// place, a late confirmation would publish that sender as a second track
-  /// for the source once fresh capture is published, carrying no audio or
-  /// video. A sender the track kept from before the reconnect belongs to the
-  /// closed connection and is left alone.
+  /// place, the server can still publish it when the confirmation arrives
+  /// late: a second track for the source that carries nothing, beside the
+  /// fresh capture that replaces it. A sender the track kept from before the
+  /// reconnect belongs to the closed connection and is left alone.
   Future<void> _removeUnconfirmedSender(LocalTrack track, rtc.RTCRtpTransceiver? previousTransceiver) async {
     final transceiver = track.transceiver;
     if (transceiver == null || identical(transceiver, previousTransceiver)) {
