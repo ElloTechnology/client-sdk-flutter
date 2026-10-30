@@ -66,6 +66,17 @@ const defaultRetryDelaysInMs = [
   maxRetryDelay,
 ];
 
+const _publisherConnectionResetMessage = 'Publisher connection reset';
+
+/// Whether [error] is the failure a publisher readiness wait ends with when
+/// its transport retires (cleanup, disconnect or a full reconnect) before the
+/// wait completes.
+@internal
+bool isPublisherConnectionReset(Object error) =>
+    error is ConnectException &&
+    error.reason == ConnectionErrorReason.InternalError &&
+    error.message == _publisherConnectionResetMessage;
+
 class Engine extends Disposable with EventsEmittable<EngineEvent> {
   static const _lossyDCLabel = '_lossy';
   static const _reliableDCLabel = '_reliable';
@@ -632,7 +643,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
   }
 
   ConnectException _publisherConnectionResetError() =>
-      ConnectException('Publisher connection reset', reason: ConnectionErrorReason.InternalError);
+      ConnectException(_publisherConnectionResetMessage, reason: ConnectionErrorReason.InternalError);
 
   void _resetPublisherConnection() {
     final completer = _publisherConnectionCompleter;

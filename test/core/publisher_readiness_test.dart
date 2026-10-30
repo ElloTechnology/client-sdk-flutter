@@ -329,4 +329,75 @@ void main() {
       await result;
     });
   });
+
+  group('inbound RPC while the publisher retires', () {
+    // The SDK acks and answers an agent's RPC inside its own engine listener,
+    // and both sends wait for publisher readiness. A teardown that retires the
+    // publisher mid-wait fails that readiness; the reset must end the request
+    // rather than escape the listener into the host application's zone, where
+    // an integration test (or the app's crash handler) sees it as uncaught.
+    test('ends a request whose ack waits on the retired publisher', () async {
+      final pc = _GatedStatePeerConnection();
+      final zoneErrors = <Object>[];
+      var handled = false;
+
+      await runZonedGuarded(() async {
+        final engine = await _engineWith(pc);
+        final room = Room(engine: engine);
+        addTearDown(room.dispose);
+        room.registerRpcMethod('echo', (data) async {
+          handled = true;
+          return data.payload;
+        });
+
+        engine.events.emit(EngineRPCRequestReceivedEvent(
+          request: lk_models.RpcRequest(
+            id: 'request-1',
+            method: 'echo',
+            payload: 'hello',
+            responseTimeoutMs: 1000,
+            version: 1,
+          ),
+          identity: 'agent',
+        ));
+        await pc.stateRequested.future;
+        await engine.cleanUp();
+        await pumpEventQueue();
+      }, (error, _) => zoneErrors.add(error));
+
+      expect(zoneErrors, isEmpty);
+      expect(handled, isFalse);
+      expect(pc.sent, isEmpty);
+    });
+
+    test('still raises a live ack failure', () async {
+      final zoneErrors = <Object>[];
+
+      await runZonedGuarded(() async {
+        // Created inside the guarded zone: a future does not deliver its error
+        // across error zones, so a native reply created outside would report
+        // its failure to the test's zone instead of the listener's.
+        final pc = _GatedStatePeerConnection();
+        final engine = await _engineWith(pc);
+        final room = Room(engine: engine);
+        addTearDown(room.dispose);
+
+        engine.events.emit(EngineRPCRequestReceivedEvent(
+          request: lk_models.RpcRequest(
+            id: 'request-1',
+            method: 'echo',
+            payload: 'hello',
+            responseTimeoutMs: 1000,
+            version: 1,
+          ),
+          identity: 'agent',
+        ));
+        await pc.stateRequested.future;
+        pc.stateReply.completeError(StateError('peerConnection is null'));
+        await pumpEventQueue();
+      }, (error, _) => zoneErrors.add(error));
+
+      expect(zoneErrors, [isA<StateError>()]);
+    });
+  });
 }
