@@ -66,6 +66,17 @@ const defaultRetryDelaysInMs = [
   maxRetryDelay,
 ];
 
+const _publisherConnectionResetMessage = 'Publisher connection reset';
+
+/// Whether [error] is the failure a publisher readiness wait ends with when
+/// its transport retires (cleanup, disconnect or a full reconnect) before the
+/// wait completes.
+@internal
+bool isPublisherConnectionReset(Object error) =>
+    error is ConnectException &&
+    error.reason == ConnectionErrorReason.InternalError &&
+    error.message == _publisherConnectionResetMessage;
+
 class Engine extends Disposable with EventsEmittable<EngineEvent> {
   static const _lossyDCLabel = '_lossy';
   static const _reliableDCLabel = '_reliable';
@@ -207,6 +218,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
   int? get lastPostSendBufferedAmount => _lastPostSendBufferedAmount;
 
   Completer<void>? _publisherConnectionCompleter;
+  Transport? _publisherConnectionTransport;
 
   String? _reliableParticipantKey(lk_models.DataPacket packet) {
     if (packet.hasParticipantSid() && packet.participantSid.isNotEmpty) {
@@ -325,6 +337,7 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
   Future<void> cleanUp() async {
     logger.fine('[$objectId] cleanUp()');
 
+    _resetPublisherConnection();
     await publisher?.dispose();
     publisher = null;
     _hasPublished = false;
@@ -556,61 +569,89 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
     }
   }
 
-  Future<void> _publisherEnsureConnected() async {
-    final state = await publisher?.pc.getConnectionState();
-    if (state?.isConnected() != true) {
-      logger.fine('Publisher is not connected...');
+  Future<void> _publisherEnsureConnected(Transport? transport, Completer<void> completer) async {
+    // A readiness attempt belongs to one transport and one reset generation.
+    // In particular, native calls can finish after that transport is retired.
+    bool isCurrent() =>
+        !isDisposed &&
+        !_isClosed &&
+        transport != null &&
+        !transport.isDisposed &&
+        identical(publisher, transport) &&
+        identical(_publisherConnectionCompleter, completer);
 
-      // start negotiation
-      if (state != rtc.RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
-        await negotiate();
+    void checkCurrent() {
+      if (!isCurrent()) throw _publisherConnectionResetError();
+    }
+
+    try {
+      checkCurrent();
+      final state = await transport!.pc.getConnectionState();
+      checkCurrent();
+      if (state?.isConnected() != true) {
+        logger.fine('Publisher is not connected...');
+
+        // start negotiation
+        if (state != rtc.RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
+          await negotiate();
+          checkCurrent();
+        }
+        if (!lkPlatformIsTest()) {
+          logger.fine('Waiting for publisher to ice-connect...');
+          await events.waitFor<EnginePublisherPeerStateUpdatedEvent>(
+            filter: (event) => event.state.isConnected(),
+            duration: connectOptions.timeouts.peerConnection,
+          );
+          checkCurrent();
+        }
       }
-      if (!lkPlatformIsTest()) {
-        logger.fine('Waiting for publisher to ice-connect...');
-        await events.waitFor<EnginePublisherPeerStateUpdatedEvent>(
-          filter: (event) => event.state.isConnected(),
-          duration: connectOptions.timeouts.peerConnection,
-        );
+      completer.complete();
+    } catch (error, stackTrace) {
+      if (!completer.isCompleted) {
+        // Preserve live failures, including their native stack. Cancellation
+        // must fail callers: sendDataPacket sends only after readiness succeeds.
+        completer.completeError(isCurrent() ? error : _publisherConnectionResetError(), stackTrace);
+      }
+    } finally {
+      if (identical(_publisherConnectionCompleter, completer)) {
+        _publisherConnectionCompleter = null;
+        _publisherConnectionTransport = null;
       }
     }
   }
 
   @internal
   Future<void> ensurePublisherConnected() {
+    final transport = publisher;
     final existing = _publisherConnectionCompleter;
     if (existing != null && !existing.isCompleted) {
-      return existing.future;
+      if (!isDisposed &&
+          !_isClosed &&
+          transport != null &&
+          !transport.isDisposed &&
+          identical(_publisherConnectionTransport, transport)) {
+        return existing.future;
+      }
+      _resetPublisherConnection();
     }
 
     final completer = Completer<void>();
     _publisherConnectionCompleter = completer;
-
-    unawaited(
-      _publisherEnsureConnected().then((_) {
-        if (!completer.isCompleted) {
-          completer.complete();
-        }
-      }, onError: (Object error, StackTrace stackTrace) {
-        if (!completer.isCompleted) {
-          completer.completeError(error, stackTrace);
-        }
-      }).whenComplete(() {
-        if (identical(_publisherConnectionCompleter, completer)) {
-          _publisherConnectionCompleter = null;
-        }
-      }),
-    );
-
+    _publisherConnectionTransport = transport;
+    unawaited(_publisherEnsureConnected(transport, completer));
     return completer.future;
   }
+
+  ConnectException _publisherConnectionResetError() =>
+      ConnectException(_publisherConnectionResetMessage, reason: ConnectionErrorReason.InternalError);
 
   void _resetPublisherConnection() {
     final completer = _publisherConnectionCompleter;
     if (completer != null && !completer.isCompleted) {
-      completer
-          .completeError(ConnectException('Publisher connection reset', reason: ConnectionErrorReason.InternalError));
+      completer.completeError(_publisherConnectionResetError());
     }
     _publisherConnectionCompleter = null;
+    _publisherConnectionTransport = null;
   }
 
   lk_models.EncryptedPacketPayload? asEncryptablePacket(lk_models.DataPacket packet) {
@@ -1259,10 +1300,9 @@ class Engine extends Disposable with EventsEmittable<EngineEvent> {
         await signalClient.cleanUp();
       }
 
+      _resetPublisherConnection();
       await publisher?.dispose();
       publisher = null;
-
-      _resetPublisherConnection();
 
       await subscriber?.dispose();
       subscriber = null;

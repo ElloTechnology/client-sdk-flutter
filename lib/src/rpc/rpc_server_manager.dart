@@ -14,6 +14,7 @@
 
 import 'package:meta/meta.dart';
 
+import '../core/engine.dart';
 import '../core/room.dart';
 import '../data_stream/stream_reader.dart';
 import '../logger.dart';
@@ -53,28 +54,29 @@ class RpcServerManager {
     String payload,
     num responseTimeoutMs,
     num version,
-  ) async {
-    await _publishAck(destinationIdentity: callerIdentity, requestId: requestId);
+  ) =>
+      _serve(requestId, () async {
+        await _publishAck(destinationIdentity: callerIdentity, requestId: requestId);
 
-    if (version != kRpcVersion) {
-      await _sendResponse(
-        callerIdentity: callerIdentity,
-        requestId: requestId,
-        error: RpcError.builtIn(RpcError.unsupportedVersion),
-        callerIsV2: false,
-      );
-      return;
-    }
+        if (version != kRpcVersion) {
+          await _sendResponse(
+            callerIdentity: callerIdentity,
+            requestId: requestId,
+            error: RpcError.builtIn(RpcError.unsupportedVersion),
+            callerIsV2: false,
+          );
+          return;
+        }
 
-    await _dispatch(
-      callerIdentity: callerIdentity,
-      requestId: requestId,
-      method: method,
-      payload: payload,
-      responseTimeoutMs: responseTimeoutMs,
-      callerIsV2: false,
-    );
-  }
+        await _dispatch(
+          callerIdentity: callerIdentity,
+          requestId: requestId,
+          method: method,
+          payload: payload,
+          responseTimeoutMs: responseTimeoutMs,
+          callerIsV2: false,
+        );
+      });
 
   // ---------- v2 inbound (text data stream on lk.rpc_request) ----------
 
@@ -96,23 +98,45 @@ class RpcServerManager {
 
     final responseTimeoutMs = int.tryParse(timeoutMsStr) ?? 0;
 
-    // Send ack first so the caller cancels its 7s ack timer even if the payload is huge
-    // or no handler is registered for this method.
-    await _publishAck(destinationIdentity: callerIdentity, requestId: requestId);
+    await _serve(requestId, () async {
+      // Send ack first so the caller cancels its 7s ack timer even if the payload is huge
+      // or no handler is registered for this method.
+      await _publishAck(destinationIdentity: callerIdentity, requestId: requestId);
 
-    final payload = await reader.readAll();
+      final payload = await reader.readAll();
 
-    await _dispatch(
-      callerIdentity: callerIdentity,
-      requestId: requestId,
-      method: method,
-      payload: payload,
-      responseTimeoutMs: responseTimeoutMs,
-      callerIsV2: true,
-    );
+      await _dispatch(
+        callerIdentity: callerIdentity,
+        requestId: requestId,
+        method: method,
+        payload: payload,
+        responseTimeoutMs: responseTimeoutMs,
+        callerIsV2: true,
+      );
+    });
   }
 
   // ---------- shared dispatch ----------
+
+  /// Runs one inbound request: its ack, dispatch and reply.
+  ///
+  /// The ack and the reply both wait for the publisher transport. When that
+  /// transport retires mid-request (the room cleaning up, disconnecting or
+  /// fully reconnecting), neither can reach the caller any more, and the
+  /// caller's own ack or response timeout reports the loss. The request then
+  /// ends here instead of failing the SDK listener that delivered it, which
+  /// would raise the reset into the host application's zone. Every other
+  /// failure still propagates.
+  Future<void> _serve(String requestId, Future<void> Function() serve) async {
+    try {
+      await serve();
+    } catch (error, stackTrace) {
+      if (!isPublisherConnectionReset(error)) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      logger.fine('RPC request $requestId dropped: its publisher transport retired');
+    }
+  }
 
   Future<void> _dispatch({
     required String callerIdentity,
