@@ -63,6 +63,11 @@ class CertificatePinningException extends LiveKitException {
   }) : super._(msg);
 }
 
+/// The native audio visualizer could not be started, so it will deliver no events.
+class AudioVisualizerException extends LiveKitException {
+  AudioVisualizerException(String msg) : super._(msg);
+}
+
 /// An internal state of the SDK is not correct and can not continue to execute.
 /// This should not occur frequently.
 class UnexpectedStateException extends LiveKitException {

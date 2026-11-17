@@ -27,13 +27,22 @@ class AudioProcessors(
   val visualizers = mutableMapOf<String, LKVisualizer>()
 
   /**
-   * Clean up all processors and release resources
+   * Releases every processor, continuing past one that throws so the rest are
+   * still detached from the track. Returns the failures in release order.
    */
-  fun cleanup() {
-    renderers.values.forEach { it.detach() }
+  fun cleanup(): List<Exception> {
+    val releases = renderers.values.map { renderer -> { renderer.detach() } } +
+      visualizers.values.map { visualizer -> { visualizer.stop() } }
     renderers.clear()
-
-    visualizers.values.forEach { it.stop() }
     visualizers.clear()
+
+    return releases.mapNotNull { release ->
+      try {
+        release()
+        null
+      } catch (e: Exception) {
+        e
+      }
+    }
   }
 }

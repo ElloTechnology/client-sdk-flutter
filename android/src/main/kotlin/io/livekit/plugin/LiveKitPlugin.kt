@@ -19,6 +19,7 @@ package io.livekit.plugin
 import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.annotation.NonNull
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -48,8 +49,25 @@ import java.util.concurrent.RejectedExecutionException
 
 /** LiveKitPlugin */
 class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
-  private var audioProcessors = mutableMapOf<String, AudioProcessors>()
   private var flutterWebRTCPlugin = FlutterWebRTCPlugin.sharedSingleton
+  private val audioProcessors = AudioProcessorRegistry(
+    resolveTrack = { trackId ->
+      flutterWebRTCPlugin.getLocalTrack(trackId) ?: flutterWebRTCPlugin.getRemoteTrack(trackId)
+    },
+    wrapTrack = { track ->
+      when (track) {
+        is LocalAudioTrack -> LKLocalAudioTrack(track)
+        is AudioTrack -> LKRemoteAudioTrack(track)
+        else -> null
+      }
+    },
+    onStaleEntryEvicted = { trackId, cleanupError ->
+      Log.w(TAG, "Replaced audio processors bound to a stale track for $trackId", cleanupError)
+    },
+    onReleaseFailed = { error ->
+      Log.w(TAG, "Failed to release an audio processor", error)
+    },
+  )
   private var binaryMessenger: BinaryMessenger? = null
   private var audioSwitchManager: LKAudioSwitchManager? = null
   private var audioDeviceModuleExecutor: ExecutorService? = null
@@ -97,7 +115,7 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
     // before FFT runs. Used on low-power devices to reduce native CPU.
     val sampleIntervalMs = call.argument<Int>("sampleIntervalMs") ?: 0
 
-    val processors = getAudioProcessors(trackId)
+    val processors = audioProcessors.getOrCreate(trackId)
     if (processors == null) {
       result.error("INVALID_ARGUMENT", "track not found", null)
       return
@@ -105,22 +123,27 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
 
     // Check if visualizer already exists
     if (processors.visualizers[visualizerId] != null) {
-      result.success(null)
+      result.success(true)
       return
     }
 
-    val visualizer = LKVisualizer(
-      barCount = barCount,
-      isCentered = isCentered,
-      smoothTransition = smoothTransition,
-      sampleIntervalMs = sampleIntervalMs,
-      audioTrack = processors.track,
-      binaryMessenger = binaryMessenger!!,
-      visualizerId = visualizerId
-    )
+    val visualizer = try {
+      LKVisualizer(
+        barCount = barCount,
+        isCentered = isCentered,
+        smoothTransition = smoothTransition,
+        sampleIntervalMs = sampleIntervalMs,
+        audioTrack = processors.track,
+        binaryMessenger = binaryMessenger!!,
+        visualizerId = visualizerId
+      )
+    } catch (e: Exception) {
+      result.error("VISUALIZER_ERROR", "Failed to create visualizer: ${e.message}", null)
+      return
+    }
 
     processors.visualizers[visualizerId] = visualizer
-    result.success(null)
+    result.success(true)
   }
 
   private fun handleStopVisualizer(@NonNull call: MethodCall, @NonNull result: Result) {
@@ -131,44 +154,8 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       return
     }
 
-    for ((trackId, processors) in audioProcessors) {
-      processors.visualizers[visualizerId]?.let { visualizer ->
-        visualizer.stop()
-        processors.visualizers.remove(visualizerId)
-      }
-      if (processors.visualizers.isEmpty() && processors.renderers.isEmpty()) {
-        audioProcessors.remove(trackId)
-      }
-    }
-
+    audioProcessors.stopVisualizer(visualizerId)
     result.success(null)
-  }
-
-  /**
-   * Get or create AudioProcessors for a given trackId
-   */
-  private fun getAudioProcessors(trackId: String): AudioProcessors? {
-    // Return existing if found
-    audioProcessors[trackId]?.let { return it }
-
-    // Create new AudioProcessors for this track
-    var audioTrack: LKAudioTrack? = null
-
-    val localTrack = flutterWebRTCPlugin.getLocalTrack(trackId)
-    if (localTrack != null) {
-      audioTrack = LKLocalAudioTrack(localTrack as LocalAudioTrack)
-    } else {
-      val remoteTrack = flutterWebRTCPlugin.getRemoteTrack(trackId)
-      if (remoteTrack != null) {
-        audioTrack = LKRemoteAudioTrack(remoteTrack as AudioTrack)
-      }
-    }
-
-    return audioTrack?.let { track ->
-      val processors = AudioProcessors(track)
-      audioProcessors[trackId] = processors
-      processors
-    }
   }
 
   /**
@@ -200,7 +187,7 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       return
     }
 
-    val processors = getAudioProcessors(trackId)
+    val processors = audioProcessors.getOrCreate(trackId)
     if (processors == null) {
       result.error("INVALID_ARGUMENT", "No such track", null)
       return
@@ -238,16 +225,7 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
       return
     }
 
-    for ((trackId, processors) in audioProcessors) {
-      processors.renderers[rendererId]?.let { renderer ->
-        renderer.detach()
-        processors.renderers.remove(rendererId)
-      }
-      if (processors.visualizers.isEmpty() && processors.renderers.isEmpty()) {
-        audioProcessors.remove(trackId)
-      }
-    }
-
+    audioProcessors.stopRenderer(rendererId)
     result.success(true)
   }
 
@@ -507,8 +485,10 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
     audioDeviceModuleExecutor?.shutdown()
     audioDeviceModuleExecutor = null
 
-    // Cleanup all processors
-    audioProcessors.values.forEach { it.cleanup() }
     audioProcessors.clear()
+  }
+
+  private companion object {
+    const val TAG = "LiveKitPlugin"
   }
 }

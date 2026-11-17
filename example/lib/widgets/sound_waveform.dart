@@ -80,7 +80,11 @@ class _SoundWaveformWidgetState extends State<SoundWaveformWidget> with TickerPr
       }
     });
 
-    await _visualizer!.start();
+    try {
+      await _visualizer!.start();
+    } on AudioVisualizerException catch (error) {
+      print('Visualizer did not start: $error');
+    }
   }
 
   void _stopVisualizer(AudioTrack track) async {

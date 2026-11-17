@@ -1,0 +1,1 @@
+patch type="fixed" "Android: rebind audio visualizers to the live track after a rejoin, stop every visualizer reliably, and report a failed visualizer start"

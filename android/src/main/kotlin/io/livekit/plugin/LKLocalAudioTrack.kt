@@ -27,10 +27,16 @@ class LKLocalAudioTrack(localAudioTrack: LocalAudioTrack) : LKAudioTrack {
     }
 
     override fun removeSink(sink: AudioTrackSink) {
-        localAudioTrack?.removeSink(sink)
+        try {
+            localAudioTrack?.removeSink(sink)
+        } catch (e: IllegalStateException) {
+            // The track was disposed, and disposing a track releases its sinks.
+        }
     }
 
     override fun id(): String {
         return localAudioTrack?.id() ?: ""
     }
+
+    override fun isBackedBy(track: Any): Boolean = localAudioTrack === track
 }
