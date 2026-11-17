@@ -34,11 +34,13 @@ class AudioProcessorRegistryTest {
 
   private val liveTracks = mutableMapOf<String, Any>()
   private val evicted = mutableListOf<Pair<String, Throwable?>>()
+  private val releaseFailures = mutableListOf<Throwable>()
 
   private val registry = AudioProcessorRegistry(
     resolveTrack = { liveTracks[it] },
     wrapTrack = { FakeAudioTrack(it) },
     onStaleEntryEvicted = { trackId, error -> evicted += trackId to error },
+    onReleaseFailed = { releaseFailures += it },
   )
 
   @Test
@@ -111,6 +113,40 @@ class AudioProcessorRegistryTest {
 
     visualizers.values.forEach { verify(it).stop() }
     assertEquals(0, registry.size)
+  }
+
+  @Test
+  fun `a visualizer whose stop throws does not keep the others running`() {
+    liveTracks["TR_a"] = NativeTrack()
+    liveTracks["TR_b"] = NativeTrack()
+    val failing = mock(LKVisualizer::class.java)
+    val failure = IllegalStateException("stop failed")
+    doThrow(failure).`when`(failing).stop()
+    val healthy = mock(LKVisualizer::class.java)
+    registry.getOrCreate("TR_a")!!.visualizers["shared"] = failing
+    registry.getOrCreate("TR_b")!!.visualizers["shared"] = healthy
+
+    registry.stopVisualizer("shared")
+
+    verify(healthy).stop()
+    assertEquals(listOf<Throwable>(failure), releaseFailures)
+    assertEquals(0, registry.size)
+  }
+
+  @Test
+  fun `releasing a stale entry continues past a renderer that throws`() {
+    liveTracks["TR_agent"] = NativeTrack()
+    val stale = registry.getOrCreate("TR_agent")!!
+    val renderer = mock(AudioRenderer::class.java)
+    doThrow(IllegalStateException("detach failed")).`when`(renderer).detach()
+    val visualizer = mock(LKVisualizer::class.java)
+    stale.renderers["renderer"] = renderer
+    stale.visualizers["visualizer"] = visualizer
+    liveTracks["TR_agent"] = NativeTrack()
+
+    registry.getOrCreate("TR_agent")
+
+    verify(visualizer).stop()
   }
 
   @Test

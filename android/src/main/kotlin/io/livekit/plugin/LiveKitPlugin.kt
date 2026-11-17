@@ -64,6 +64,9 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
     onStaleEntryEvicted = { trackId, cleanupError ->
       Log.w(TAG, "Replaced audio processors bound to a stale track for $trackId", cleanupError)
     },
+    onReleaseFailed = { error ->
+      Log.w(TAG, "Failed to release an audio processor", error)
+    },
   )
   private var binaryMessenger: BinaryMessenger? = null
   private var audioSwitchManager: LKAudioSwitchManager? = null

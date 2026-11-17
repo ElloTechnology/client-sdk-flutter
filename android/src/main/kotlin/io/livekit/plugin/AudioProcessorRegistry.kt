@@ -26,8 +26,13 @@ package io.livekit.plugin
  * the new peer connection, and the old one is disposed. Every lookup therefore
  * resolves the live track first and replaces an entry that wraps anything else.
  *
- * Calls must come from one thread; the plugin's method channel runs on a serial
- * background task queue.
+ * Method calls arrive on the plugin's background task queue and engine
+ * detachment on the platform thread, so every operation holds the registry's
+ * lock.
+ *
+ * Releasing a processor is best effort: a failure is reported and the
+ * remaining processors are still released, so one native error cannot leave
+ * the others attached to their tracks.
  */
 class AudioProcessorRegistry(
   /** The object flutter_webrtc currently maps [trackId] to, or null when none. */
@@ -36,13 +41,16 @@ class AudioProcessorRegistry(
   private val wrapTrack: (track: Any) -> LKAudioTrack?,
   /** Reports an entry dropped because its track was no longer the live one. */
   private val onStaleEntryEvicted: (trackId: String, cleanupError: Throwable?) -> Unit = { _, _ -> },
+  /** Reports a processor whose release threw; the others are still released. */
+  private val onReleaseFailed: (error: Throwable) -> Unit = {},
 ) {
   private val entries = mutableMapOf<String, AudioProcessors>()
 
   /** The number of tracks holding at least one processor. */
-  val size: Int get() = entries.size
+  val size: Int @Synchronized get() = entries.size
 
   /** The processors for the live track behind [trackId], creating them when needed. */
+  @Synchronized
   fun getOrCreate(trackId: String): AudioProcessors? {
     val liveTrack = resolveTrack(trackId)
     val cached = entries[trackId]
@@ -58,37 +66,47 @@ class AudioProcessorRegistry(
   }
 
   /** Stops [visualizerId] on every track and drops entries left with no processors. */
+  @Synchronized
   fun stopVisualizer(visualizerId: String) = removeEach { processors ->
-    processors.visualizers.remove(visualizerId)?.stop()
+    processors.visualizers.remove(visualizerId)?.let { release { it.stop() } }
   }
 
   /** Detaches [rendererId] from every track and drops entries left with no processors. */
+  @Synchronized
   fun stopRenderer(rendererId: String) = removeEach { processors ->
-    processors.renderers.remove(rendererId)?.detach()
+    processors.renderers.remove(rendererId)?.let { release { it.detach() } }
   }
 
   /** Releases every processor. */
+  @Synchronized
   fun clear() {
-    entries.values.forEach { cleanUp(it) }
+    entries.values.forEach { processors -> cleanUp(processors)?.let(onReleaseFailed) }
     entries.clear()
   }
 
-  private fun removeEach(release: (AudioProcessors) -> Unit) {
+  private fun removeEach(releaseFrom: (AudioProcessors) -> Unit) {
     val iterator = entries.values.iterator()
     while (iterator.hasNext()) {
       val processors = iterator.next()
-      release(processors)
+      releaseFrom(processors)
       if (processors.visualizers.isEmpty() && processors.renderers.isEmpty()) {
         iterator.remove()
       }
     }
   }
 
-  private fun cleanUp(processors: AudioProcessors): Throwable? =
+  /** Releases [processors], reporting all but the first failure, which is returned. */
+  private fun cleanUp(processors: AudioProcessors): Throwable? {
+    val failures = processors.cleanup()
+    failures.drop(1).forEach(onReleaseFailed)
+    return failures.firstOrNull()
+  }
+
+  private fun release(action: () -> Unit) {
     try {
-      processors.cleanup()
-      null
+      action()
     } catch (e: Exception) {
-      e
+      onReleaseFailed(e)
     }
+  }
 }
