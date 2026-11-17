@@ -295,6 +295,8 @@ class Native {
     }
   }
 
+  /// Whether the platform started the visualizer. Failures are logged and
+  /// reported as false; the caller decides whether they propagate.
   @internal
   static Future<bool> startVisualizer(
     String trackId, {

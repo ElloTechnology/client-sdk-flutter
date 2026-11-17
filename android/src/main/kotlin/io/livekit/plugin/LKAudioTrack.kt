@@ -25,4 +25,11 @@ interface LKAudioTrack {
     fun removeSink(sink: AudioTrackSink)
 
     fun id(): String
+
+    /**
+     * Whether this wrapper wraps exactly [track], the object flutter_webrtc
+     * currently maps the track id to. A wrapper that is not backed by the
+     * live object wraps a track from an earlier peer connection.
+     */
+    fun isBackedBy(track: Any): Boolean
 }

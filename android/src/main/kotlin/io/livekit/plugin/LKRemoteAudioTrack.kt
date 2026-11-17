@@ -27,10 +27,16 @@ class LKRemoteAudioTrack(audioTrack: AudioTrack) : LKAudioTrack {
     }
 
     override fun removeSink(sink: AudioTrackSink) {
-        audioTrack?.removeSink(sink)
+        try {
+            audioTrack?.removeSink(sink)
+        } catch (e: IllegalStateException) {
+            // The track was disposed, and disposing a track releases its sinks.
+        }
     }
 
     override fun id(): String {
         return audioTrack?.id() ?: ""
     }
+
+    override fun isBackedBy(track: Any): Boolean = audioTrack === track
 }
